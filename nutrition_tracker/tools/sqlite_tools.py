@@ -106,26 +106,25 @@ def save_meal(
         
         now = datetime.now()
         
-        # Защита от дублей: проверяем не было ли похожей записи в последние 5 минут
-        five_min_ago = (now - timedelta(minutes=5)).strftime('%H:%M')
+        # Мягкая защита от дублей: проверяем ТОЧНОЕ совпадение описания за последние 2 минуты
+        two_min_ago = (now - timedelta(minutes=2)).strftime('%H:%M')
         cursor.execute('''
-            SELECT id, description, calories FROM meals 
-            WHERE user_id = ? AND date = ? AND time >= ?
+            SELECT id, description FROM meals 
+            WHERE user_id = ? AND date = ? AND time >= ? AND meal_type = ?
             ORDER BY id DESC LIMIT 1
-        ''', (user_id, now.strftime('%Y-%m-%d'), five_min_ago))
+        ''', (user_id, now.strftime('%Y-%m-%d'), two_min_ago, meal_type))
         
         recent = cursor.fetchone()
         if recent:
-            # Проверяем похожесть описания (содержит ключевые слова)
-            recent_desc = recent['description'].lower()
-            new_desc = description.lower()
-            # Если описания очень похожи - это дубль
-            if (recent_desc in new_desc or new_desc in recent_desc or 
-                abs(recent['calories'] - calories) < 50):  # или калории почти одинаковые
+            # Проверяем ТОЧНОЕ совпадение описания (игнорируя регистр)
+            recent_desc = recent['description'].lower().strip()
+            new_desc = description.lower().strip()
+            # Только если описания идентичны — это дубль
+            if recent_desc == new_desc:
                 conn.close()
                 return {
                     "status": "duplicate_prevented",
-                    "message": f"Похожий прием пищи уже записан (ID {recent['id']}): {recent['description']}. Если это другая еда, уточни описание.",
+                    "message": f"Эта еда уже записана (ID {recent['id']}): {recent['description']}",
                     "existing_meal_id": recent['id']
                 }
         
