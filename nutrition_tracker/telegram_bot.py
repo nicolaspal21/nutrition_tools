@@ -24,6 +24,9 @@ from google.genai import types
 # Загружаем переменные окружения
 load_dotenv()
 
+# ID пользователей с доступом к /sync (через запятую в .env)
+ADMIN_USER_IDS = set(filter(None, os.getenv('ADMIN_USER_IDS', '').split(',')))
+
 # Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -182,6 +185,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /week — статистика за неделю
 /goals — твои цели
 /undo — отменить последнюю запись
+/sync — перенести в Google Sheets
 /help — справка
 
 Давай начнем! 🚀
@@ -218,6 +222,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /week — статистика за неделю
 /goals — показать цели
 /undo — отменить последнее
+/sync — перенести данные в Google Sheets
 /help — эта справка
 
 💡 Бот использует Gemini AI для анализа фото, аудио и текста.
@@ -271,6 +276,25 @@ async def undo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text(response, parse_mode='Markdown')
     except Exception:
         await status_msg.edit_text(response)
+
+
+async def sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /sync — синхронизация в Google Sheets"""
+    user_id = str(update.effective_user.id)
+    
+    # Ограничиваем доступ если ADMIN_USER_IDS задан
+    if ADMIN_USER_IDS and user_id not in ADMIN_USER_IDS:
+        await update.message.reply_text("❌ У вас нет доступа к этой команде")
+        return
+    
+    status_msg = await update.message.reply_text("🔄 Синхронизирую данные в Google Sheets...")
+    
+    try:
+        from .tools.sheets_tools import sync_from_sqlite
+        result = sync_from_sqlite()
+        await status_msg.edit_text(result["message"])
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Ошибка: {str(e)}")
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -492,6 +516,7 @@ def create_bot() -> Application:
     application.add_handler(CommandHandler("week", week_command))
     application.add_handler(CommandHandler("goals", goals_command))
     application.add_handler(CommandHandler("undo", undo_command))
+    application.add_handler(CommandHandler("sync", sync_command))
     
     # Регистрируем обработчики сообщений
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
@@ -537,6 +562,7 @@ def main():
         application.add_handler(CommandHandler("week", week_command))
         application.add_handler(CommandHandler("goals", goals_command))
         application.add_handler(CommandHandler("undo", undo_command))
+        application.add_handler(CommandHandler("sync", sync_command))
         
         # Регистрируем обработчики сообщений
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))

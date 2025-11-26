@@ -24,7 +24,11 @@ def _get_spreadsheet():
     global _client, _spreadsheet
     
     if _spreadsheet is None:
-        creds_file = os.getenv('GOOGLE_SHEETS_CREDENTIALS_FILE', 'credentials.json')
+        # Ищем credentials относительно модуля (папка nutrition_tracker)
+        module_dir = os.path.dirname(os.path.dirname(__file__))  # nutrition_tracker/
+        default_creds = os.path.join(module_dir, 'ai-n8n-test-1-471818-5774c44e8b76.json')
+        
+        creds_file = os.getenv('GOOGLE_SHEETS_CREDENTIALS_FILE', default_creds)
         spreadsheet_id = os.getenv('SPREADSHEET_ID', '')
         
         if not spreadsheet_id:
@@ -455,3 +459,162 @@ def delete_last_meal(user_id: str) -> dict:
             "message": f"Ошибка удаления: {str(e)}"
         }
 
+
+def sync_from_sqlite() -> dict:
+    """
+    Синхронизирует записи из SQLite в Google Sheets.
+    Переносит только те записи, которых ещё нет в Sheets.
+    
+    Returns:
+        dict: Статус операции со счётчиками
+    """
+    import sqlite3
+    
+    DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'nutrition.db')
+    
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        stats = {"meals": 0, "users": 0, "weight_log": 0, "memory_bank": 0}
+        
+        # 1. Синхронизация meals
+        sheet = _get_or_create_sheet('meals', [
+            'id', 'user_id', 'date', 'time', 'meal_type',
+            'description', 'calories', 'protein', 'fat', 'carbs', 'source'
+        ])
+        
+        # Получаем существующие ID из Sheets
+        existing_data = sheet.get_all_values()
+        existing_ids = set()
+        if len(existing_data) > 1:
+            for row in existing_data[1:]:
+                if row[0] and row[0].isdigit():
+                    existing_ids.add(int(row[0]))
+        
+        # Получаем все записи из SQLite
+        cursor.execute('SELECT * FROM meals ORDER BY id')
+        meals = cursor.fetchall()
+        
+        new_rows = []
+        for m in meals:
+            if m['id'] not in existing_ids:
+                new_rows.append([
+                    m['id'], m['user_id'], m['date'], m['time'], m['meal_type'],
+                    m['description'], m['calories'], m['protein'], m['fat'], 
+                    m['carbs'], m['source']
+                ])
+        
+        if new_rows:
+            sheet.append_rows(new_rows)
+            stats["meals"] = len(new_rows)
+        
+        # 2. Синхронизация users
+        sheet = _get_or_create_sheet('users', [
+            'user_id', 'name', 'goal_type', 'daily_calories',
+            'daily_protein', 'daily_fat', 'daily_carbs',
+            'created_at', 'updated_at'
+        ])
+        
+        existing_data = sheet.get_all_values()
+        existing_user_ids = set()
+        if len(existing_data) > 1:
+            for row in existing_data[1:]:
+                if row[0]:
+                    existing_user_ids.add(row[0])
+        
+        cursor.execute('SELECT * FROM users')
+        users = cursor.fetchall()
+        
+        new_rows = []
+        for u in users:
+            if u['user_id'] not in existing_user_ids:
+                new_rows.append([
+                    u['user_id'], u['name'], u['goal_type'], u['daily_calories'],
+                    u['daily_protein'], u['daily_fat'], u['daily_carbs'],
+                    u['created_at'], u['updated_at']
+                ])
+        
+        if new_rows:
+            sheet.append_rows(new_rows)
+            stats["users"] = len(new_rows)
+        
+        # 3. Синхронизация weight_log
+        sheet = _get_or_create_sheet('weight_log', [
+            'id', 'user_id', 'date', 'time', 'weight', 'note', 'created_at'
+        ])
+        
+        existing_data = sheet.get_all_values()
+        existing_ids = set()
+        if len(existing_data) > 1:
+            for row in existing_data[1:]:
+                if row[0] and row[0].isdigit():
+                    existing_ids.add(int(row[0]))
+        
+        cursor.execute('SELECT * FROM weight_log ORDER BY id')
+        weights = cursor.fetchall()
+        
+        new_rows = []
+        for w in weights:
+            if w['id'] not in existing_ids:
+                new_rows.append([
+                    w['id'], w['user_id'], w['date'], w['time'],
+                    w['weight'], w['note'] or '', w['created_at']
+                ])
+        
+        if new_rows:
+            sheet.append_rows(new_rows)
+            stats["weight_log"] = len(new_rows)
+        
+        # 4. Синхронизация memory_bank
+        sheet = _get_or_create_sheet('memory_bank', [
+            'id', 'user_id', 'memory_type', 'content', 'metadata',
+            'created_at', 'updated_at'
+        ])
+        
+        existing_data = sheet.get_all_values()
+        existing_ids = set()
+        if len(existing_data) > 1:
+            for row in existing_data[1:]:
+                if row[0] and row[0].isdigit():
+                    existing_ids.add(int(row[0]))
+        
+        cursor.execute('SELECT * FROM memory_bank ORDER BY id')
+        memories = cursor.fetchall()
+        
+        new_rows = []
+        for m in memories:
+            if m['id'] not in existing_ids:
+                new_rows.append([
+                    m['id'], m['user_id'], m['memory_type'], m['content'],
+                    m['metadata'] or '', m['created_at'], m['updated_at']
+                ])
+        
+        if new_rows:
+            sheet.append_rows(new_rows)
+            stats["memory_bank"] = len(new_rows)
+        
+        conn.close()
+        
+        total = sum(stats.values())
+        if total == 0:
+            return {
+                "status": "success",
+                "message": "✅ Все данные уже синхронизированы!",
+                "stats": stats
+            }
+        
+        return {
+            "status": "success",
+            "message": f"✅ Синхронизировано: {stats['meals']} приёмов пищи, "
+                      f"{stats['users']} пользователей, {stats['weight_log']} записей веса, "
+                      f"{stats['memory_bank']} записей памяти",
+            "stats": stats
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"❌ Ошибка синхронизации: {str(e)}"
+        }
