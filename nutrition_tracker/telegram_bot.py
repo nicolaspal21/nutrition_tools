@@ -37,6 +37,12 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 _runner = None
 _session_service = None
 
+# Кэш для сбора альбомов (media groups)
+_media_groups: dict[str, list[bytes]] = {}
+_media_group_captions: dict[str, str] = {}
+_media_group_updates: dict[str, Update] = {}
+_media_group_user_ids: dict[str, str] = {}
+
 
 def get_runner():
     """Получает или создает Runner для ADK агента"""
@@ -57,11 +63,32 @@ def get_runner():
 
 async def run_agent(user_id: str, message: str) -> str:
     """
-    Запускает агента для обработки сообщения.
+    Запускает агента для обработки текстового сообщения.
     
     Args:
         user_id: ID пользователя Telegram
         message: Текст сообщения
+    
+    Returns:
+        Ответ агента
+    """
+    return await run_agent_multimodal(user_id, message)
+
+
+async def run_agent_multimodal(
+    user_id: str, 
+    message: str,
+    media_bytes: bytes = None,
+    media_mime_type: str = None
+) -> str:
+    """
+    Запускает агента для обработки мультимодального сообщения (текст + фото/аудио).
+    
+    Args:
+        user_id: ID пользователя Telegram
+        message: Текст сообщения
+        media_bytes: Байты медиафайла (фото или аудио)
+        media_mime_type: MIME тип медиа (image/jpeg, audio/ogg и т.д.)
     
     Returns:
         Ответ агента
@@ -80,11 +107,21 @@ async def run_agent(user_id: str, message: str) -> str:
         except Exception:
             pass  # Сессия уже существует
         
-        # Преобразуем сообщение в Content (обязательный формат для ADK)
-        content = types.Content(
-            role="user",
-            parts=[types.Part(text=f"[user_id: {user_id}] {message}")]
-        )
+        # Формируем parts для Content
+        parts = [types.Part(text=f"[user_id: {user_id}] {message}")]
+        
+        # Добавляем медиа если есть
+        if media_bytes and media_mime_type:
+            parts.append(
+                types.Part(
+                    inline_data=types.Blob(
+                        mime_type=media_mime_type,
+                        data=bytes(media_bytes)
+                    )
+                )
+            )
+        
+        content = types.Content(role="user", parts=parts)
         
         # Собираем ответ из async generator
         final_response = ""
@@ -94,7 +131,7 @@ async def run_agent(user_id: str, message: str) -> str:
             new_message=content,
         ):
             # Логируем все события для отладки
-            logger.info(f"Event: {type(event).__name__}, is_final: {event.is_final_response()}, content: {event.content}")
+            logger.debug(f"Event: {type(event).__name__}, is_final: {event.is_final_response()}")
             
             # Извлекаем текст из любого события с контентом
             if event.content and event.content.parts:
@@ -127,15 +164,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 Я NutriTracker — твой AI-помощник по питанию.
 
 *Что я умею:*
-📸 Анализировать описание еды
+📸 Анализировать *фото еды* — просто сфоткай блюдо!
+🎤 Понимать *голосовые* — расскажи что съел
+✍️ Анализировать текст — напиши описание
 🔢 Считать калории и БЖУ
 💡 Давать персональные советы
 📊 Показывать статистику
 
 *Как пользоваться:*
-• Просто напиши что съел: "2 яйца и тост"
-• Спроси статистику: "что я ел сегодня?"
-• Установи цели: "хочу похудеть"
+• 📸 Отправь фото еды
+• 🎤 Запиши голосовое "съел борщ с хлебом"
+• ✍️ Напиши: "2 яйца и тост"
+• ❓ Спроси: "что я ел сегодня?"
 
 *Команды:*
 /today — сводка за сегодня
@@ -154,11 +194,15 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /help"""
     help_text = """📖 *Справка NutriTracker*
 
-*Добавление еды:*
-Просто напиши что съел:
+*Добавление еды (3 способа):*
+
+📸 *Фото* — сфоткай блюдо (можно несколько фото сразу!)
+
+🎤 *Голосовое* — запиши что съел голосом
+
+✍️ *Текст* — напиши описание:
 • "Съел борщ и 2 куска хлеба"
 • "На завтрак овсянка с бананом"
-• "Перекусил яблоком"
 
 *Вопросы о питании:*
 • "Что я ел вчера?"
@@ -168,17 +212,15 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 *Управление целями:*
 • "Хочу похудеть"
 • "Установи калории 1800"
-• "Мои цели"
 
 *Команды:*
-/start — начало работы
 /today — сводка за сегодня
 /week — статистика за неделю
 /goals — показать цели
 /undo — отменить последнее
 /help — эта справка
 
-💡 Бот использует AI для анализа. Точность ~90%.
+💡 Бот использует Gemini AI для анализа фото, аудио и текста.
 """
     await update.message.reply_text(help_text, parse_mode='Markdown')
 
@@ -253,24 +295,90 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик фотографий"""
+    """Обработчик фотографий — поддержка альбомов (несколько фото одного блюда)"""
     user_id = str(update.effective_user.id)
-    caption = update.message.caption or "Что это за еда? Проанализируй и посчитай калории."
+    media_group_id = update.message.media_group_id
+    caption = update.message.caption
+    
+    # Скачиваем фото (максимальное разрешение)
+    photo = update.message.photo[-1]
+    photo_file = await context.bot.get_file(photo.file_id)
+    photo_bytes = bytes(await photo_file.download_as_bytearray())
+    
+    if media_group_id:
+        # Это альбом — собираем все фото
+        if media_group_id not in _media_groups:
+            _media_groups[media_group_id] = []
+            _media_group_updates[media_group_id] = update
+            _media_group_user_ids[media_group_id] = user_id
+            if caption:
+                _media_group_captions[media_group_id] = caption
+            # Запускаем отложенную обработку
+            asyncio.create_task(
+                _process_media_group_delayed(media_group_id, context)
+            )
+        
+        _media_groups[media_group_id].append(photo_bytes)
+        # Сохраняем caption если есть (может быть на любом фото альбома)
+        if caption and media_group_id not in _media_group_captions:
+            _media_group_captions[media_group_id] = caption
+    else:
+        # Одиночное фото — обрабатываем сразу
+        await _process_single_photo(user_id, photo_bytes, caption, update, context)
+
+
+async def _process_media_group_delayed(
+    media_group_id: str, 
+    context: ContextTypes.DEFAULT_TYPE
+):
+    """Ждём 1.5 сек пока все фото альбома придут, потом обрабатываем"""
+    await asyncio.sleep(1.5)
+    
+    photos = _media_groups.pop(media_group_id, [])
+    caption = _media_group_captions.pop(media_group_id, None)
+    update = _media_group_updates.pop(media_group_id, None)
+    user_id = _media_group_user_ids.pop(media_group_id, None)
+    
+    if not photos or not update or not user_id:
+        return
+    
+    status_msg = await update.message.reply_text(
+        f"📸 Анализирую {len(photos)} фото блюда..."
+    )
+    
+    try:
+        # Формируем prompt
+        prompt = caption or f"Это {len(photos)} фото одного блюда с разных ракурсов. Распознай блюдо, определи порцию, посчитай КБЖУ."
+        
+        # Отправляем все фото в одном запросе
+        response = await _run_agent_with_multiple_images(user_id, prompt, photos)
+        
+        try:
+            await status_msg.edit_text(response, parse_mode='Markdown')
+        except Exception:
+            await status_msg.edit_text(response)
+    except Exception as e:
+        logger.error(f"Error processing media group: {e}")
+        await status_msg.edit_text(f"❌ Ошибка: {str(e)}")
+
+
+async def _process_single_photo(
+    user_id: str, 
+    photo_bytes: bytes, 
+    caption: str,
+    update: Update, 
+    context: ContextTypes.DEFAULT_TYPE
+):
+    """Обработка одиночного фото"""
+    prompt = caption or "Распознай еду на этом фото, определи порцию, посчитай калории и БЖУ."
     
     status_msg = await update.message.reply_text("📸 Анализирую фото...")
     
     try:
-        # Получаем фото
-        photo = update.message.photo[-1]
-        photo_file = await context.bot.get_file(photo.file_id)
-        photo_bytes = await photo_file.download_as_bytearray()
-        
-        # TODO: Интеграция с Gemini Vision через ADK
-        # Пока используем только подпись
-        response = await run_agent(
-            user_id, 
-            f"Пользователь отправил фото еды с подписью: {caption}. "
-            "Проанализируй описание и рассчитай примерные калории."
+        response = await run_agent_multimodal(
+            user_id, prompt,
+            media_bytes=photo_bytes,
+            media_mime_type="image/jpeg"
         )
         
         try:
@@ -282,24 +390,86 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text(f"❌ Ошибка обработки фото: {str(e)}")
 
 
-async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик голосовых сообщений"""
-    user_id = str(update.effective_user.id)
-    
-    status_msg = await update.message.reply_text("🎤 Обрабатываю голосовое...")
+async def _run_agent_with_multiple_images(
+    user_id: str, 
+    message: str, 
+    images: list[bytes]
+) -> str:
+    """Запускает агента с несколькими изображениями"""
+    runner = get_runner()
+    session_id = f"telegram_{user_id}"
     
     try:
-        # Получаем голосовое
+        try:
+            await _session_service.create_session(
+                app_name="nutrition_tracker",
+                user_id=user_id,
+                session_id=session_id
+            )
+        except Exception:
+            pass
+        
+        # Формируем parts: текст + все изображения
+        parts = [types.Part(text=f"[user_id: {user_id}] {message}")]
+        
+        for img_bytes in images:
+            parts.append(
+                types.Part(
+                    inline_data=types.Blob(
+                        mime_type="image/jpeg",
+                        data=img_bytes
+                    )
+                )
+            )
+        
+        content = types.Content(role="user", parts=parts)
+        
+        final_response = ""
+        async for event in runner.run_async(
+            session_id=session_id,
+            user_id=user_id,
+            new_message=content,
+        ):
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        if event.is_final_response():
+                            final_response = part.text
+                        elif not final_response:
+                            final_response = part.text
+        
+        return final_response if final_response else "Не удалось получить ответ."
+            
+    except Exception as e:
+        logger.error(f"Error running agent with images: {e}")
+        return f"Произошла ошибка: {str(e)}"
+
+
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик голосовых сообщений — расшифровывает аудио через Gemini"""
+    user_id = str(update.effective_user.id)
+    
+    status_msg = await update.message.reply_text("🎤 Расшифровываю голосовое...")
+    
+    try:
+        # Получаем голосовое сообщение
         voice = update.message.voice
         voice_file = await context.bot.get_file(voice.file_id)
         voice_bytes = await voice_file.download_as_bytearray()
         
-        # TODO: Интеграция с Gemini Audio через ADK
-        # Пока просим пользователя написать текстом
-        await status_msg.edit_text(
-            "🎤 Извини, обработка голосовых сообщений пока в разработке.\n"
-            "Пожалуйста, напиши текстом что ты съел."
+        # Передаём аудио напрямую в агента (Gemini Audio)
+        response = await run_agent_multimodal(
+            user_id,
+            "Расшифруй это голосовое сообщение. Пользователь описывает еду. "
+            "Проанализируй, посчитай калории и БЖУ, сохрани в дневник.",
+            media_bytes=voice_bytes,
+            media_mime_type="audio/ogg"
         )
+        
+        try:
+            await status_msg.edit_text(response, parse_mode='Markdown')
+        except Exception:
+            await status_msg.edit_text(response)
     except Exception as e:
         logger.error(f"Error handling voice: {e}")
         await status_msg.edit_text(f"❌ Ошибка: {str(e)}")
