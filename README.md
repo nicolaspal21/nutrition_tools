@@ -158,12 +158,13 @@ copy nutrition_tracker\env.template nutrition_tracker\.env
 #### Google Sheets (optional):
 1. Create a project in [Google Cloud Console](https://console.cloud.google.com/)
 2. Enable Google Sheets API and Google Drive API
-3. Create a Service Account and download `credentials.json`
-4. Create a Google Spreadsheet
-5. Share the spreadsheet with the service account email
-6. Add SPREADSHEET_ID to `.env`
+3. Create a Service Account and download JSON credentials
+4. Place the credentials file in `nutrition_tracker/` folder
+5. Create a Google Spreadsheet
+6. Share the spreadsheet with the service account email
+7. Add `SPREADSHEET_ID` to `.env`
 
-> 💡 **Note**: SQLite (`nutrition.db`) is used by default. To switch to Google Sheets, change the imports in `agent.py`.
+> 💡 **Note**: SQLite (`nutrition.db`) is used by default. Google Sheets sync available via `/sync` command.
 
 ---
 
@@ -206,6 +207,7 @@ python -m nutrition_tracker.telegram_bot
 | `/week` | Weekly statistics |
 | `/goals` | Show goals |
 | `/undo` | Undo last entry |
+| `/sync` | Sync data to Google Sheets (admin only) |
 | `/help` | Help |
 
 ### Example messages:
@@ -360,7 +362,9 @@ nutrition_tracker/
 ├── agent.py              # ADK agents (root + sub-agents) + observability
 ├── telegram_bot.py       # Telegram integration
 ├── env.template          # Environment variables template
-├── nutrition.db          # SQLite database
+├── .env                  # Environment variables (create from template)
+├── nutrition.db          # SQLite database (auto-created)
+├── *.json                # Google Sheets credentials (optional)
 │
 └── tools/                # Tools
     ├── __init__.py
@@ -392,10 +396,11 @@ README.md                 # Documentation
 
 - **Multimodal input**: Photos (Gemini Vision), voice (Gemini Audio), and text
 - **Album support**: Send multiple photos of the same dish — they'll be analyzed together
-- **Duplicate protection**: If similar food was recorded in the last 5 minutes — the bot will warn
+- **Smart duplicate protection**: Blocks only exact duplicates within 2 minutes (same description + meal type)
 - **Markdown fallback**: If formatting breaks — message will be sent as plain text
 - **Persistence**: Data is stored in SQLite, not lost on restart
 - **Editing**: Any entry can be modified by ID
+- **Weight tracking**: One entry per day (re-entering overwrites), history with dates
 - **Weight-nutrition analysis**: Correlates weight changes with calorie intake
 - **Long-term memory**: Remembers allergies, preferences, and habits for personalization
 - **Observability**: OpenTelemetry tracing for debugging and monitoring
