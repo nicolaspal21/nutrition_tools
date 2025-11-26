@@ -1,0 +1,19 @@
+# Google Agent Development Kit
+google-adk>=0.3.0
+
+# Google GenAI (для types.Content, types.Part и др.)
+google-genai>=1.0.0
+
+# Telegram Bot
+python-telegram-bot>=20.7
+
+# Google Sheets
+gspread>=6.0.0
+google-auth>=2.0.0
+
+# Environment
+python-dotenv>=1.0.0
+
+# Image processing (optional, for future photo support)
+Pillow>=10.0.0
+
