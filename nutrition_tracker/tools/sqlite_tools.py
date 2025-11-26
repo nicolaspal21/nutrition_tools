@@ -53,6 +53,20 @@ def _init_db():
         )
     ''')
     
+    # Таблица для записи веса
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS weight_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            date TEXT NOT NULL,
+            time TEXT NOT NULL,
+            weight REAL NOT NULL,
+            note TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, date)
+        )
+    ''')
+    
     conn.commit()
     conn.close()
 
@@ -614,4 +628,389 @@ def delete_meal(user_id: str, meal_id: Optional[int] = None) -> dict:
 def delete_last_meal(user_id: str) -> dict:
     """Удаляет последний прием пищи (алиас для delete_meal)."""
     return delete_meal(user_id)
+
+
+# ============================================================
+# ФУНКЦИИ ДЛЯ РАБОТЫ С ВЕСОМ
+# ============================================================
+
+def save_weight(
+    user_id: str,
+    weight: float,
+    note: Optional[str] = None
+) -> dict:
+    """
+    Сохраняет вес пользователя. Один замер в день (перезаписывает если уже есть).
+    
+    Args:
+        user_id: Идентификатор пользователя
+        weight: Вес в килограммах
+        note: Опциональная заметка (например, "после тренировки")
+    
+    Returns:
+        dict: Статус операции
+    """
+    try:
+        conn = _get_connection()
+        cursor = conn.cursor()
+        
+        now = datetime.now()
+        date_str = now.strftime('%Y-%m-%d')
+        time_str = now.strftime('%H:%M')
+        
+        # Проверяем есть ли уже запись за сегодня
+        cursor.execute('''
+            SELECT id, weight FROM weight_log WHERE user_id = ? AND date = ?
+        ''', (user_id, date_str))
+        existing = cursor.fetchone()
+        
+        if existing:
+            # Обновляем существующую запись
+            old_weight = existing['weight']
+            cursor.execute('''
+                UPDATE weight_log 
+                SET weight = ?, time = ?, note = ?, created_at = CURRENT_TIMESTAMP
+                WHERE user_id = ? AND date = ?
+            ''', (weight, time_str, note, user_id, date_str))
+            conn.commit()
+            conn.close()
+            
+            diff = weight - old_weight
+            diff_str = f"+{diff:.1f}" if diff > 0 else f"{diff:.1f}"
+            
+            return {
+                "status": "updated",
+                "message": f"Вес обновлён: {old_weight:.1f} → {weight:.1f} кг ({diff_str})",
+                "date": date_str,
+                "weight": weight,
+                "previous_weight": old_weight,
+                "change": round(diff, 2)
+            }
+        
+        # Создаем новую запись
+        cursor.execute('''
+            INSERT INTO weight_log (user_id, date, time, weight, note)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (user_id, date_str, time_str, weight, note))
+        
+        weight_id = cursor.lastrowid
+        conn.commit()
+        
+        # Получаем предыдущий вес для сравнения
+        cursor.execute('''
+            SELECT weight, date FROM weight_log 
+            WHERE user_id = ? AND date < ?
+            ORDER BY date DESC LIMIT 1
+        ''', (user_id, date_str))
+        prev = cursor.fetchone()
+        conn.close()
+        
+        if prev:
+            diff = weight - prev['weight']
+            diff_str = f"+{diff:.1f}" if diff > 0 else f"{diff:.1f}"
+            return {
+                "status": "success",
+                "message": f"Вес записан: {weight:.1f} кг ({diff_str} с {prev['date']})",
+                "weight_id": weight_id,
+                "date": date_str,
+                "weight": weight,
+                "previous_weight": prev['weight'],
+                "previous_date": prev['date'],
+                "change": round(diff, 2)
+            }
+        
+        return {
+            "status": "success",
+            "message": f"Вес записан: {weight:.1f} кг (первая запись)",
+            "weight_id": weight_id,
+            "date": date_str,
+            "weight": weight
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Ошибка сохранения веса: {str(e)}"
+        }
+
+
+def get_weight_history(user_id: str, days: int = 30) -> dict:
+    """
+    Получает историю веса за указанный период.
+    
+    Args:
+        user_id: Идентификатор пользователя
+        days: Количество дней (по умолчанию 30)
+    
+    Returns:
+        dict: История веса со статистикой
+    """
+    try:
+        conn = _get_connection()
+        cursor = conn.cursor()
+        
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+        start_str = start_date.strftime('%Y-%m-%d')
+        end_str = end_date.strftime('%Y-%m-%d')
+        
+        cursor.execute('''
+            SELECT date, time, weight, note
+            FROM weight_log
+            WHERE user_id = ? AND date BETWEEN ? AND ?
+            ORDER BY date DESC
+        ''', (user_id, start_str, end_str))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        if not rows:
+            return {
+                "status": "success",
+                "message": "Записей о весе не найдено",
+                "entries": [],
+                "count": 0
+            }
+        
+        entries = []
+        weights = []
+        for row in rows:
+            entries.append({
+                "date": row['date'],
+                "time": row['time'],
+                "weight": row['weight'],
+                "note": row['note']
+            })
+            weights.append(row['weight'])
+        
+        # Статистика
+        current = weights[0]  # последний замер (сортировка DESC)
+        first = weights[-1]   # первый замер в периоде
+        total_change = current - first
+        min_weight = min(weights)
+        max_weight = max(weights)
+        avg_weight = sum(weights) / len(weights)
+        
+        return {
+            "status": "success",
+            "period": f"{start_str} — {end_str}",
+            "entries": entries,
+            "count": len(entries),
+            "stats": {
+                "current_weight": round(current, 1),
+                "start_weight": round(first, 1),
+                "total_change": round(total_change, 2),
+                "min_weight": round(min_weight, 1),
+                "max_weight": round(max_weight, 1),
+                "avg_weight": round(avg_weight, 1)
+            }
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Ошибка получения истории веса: {str(e)}"
+        }
+
+
+def get_weight_nutrition_analysis(user_id: str, days: int = 14) -> dict:
+    """
+    Анализирует связь между весом и питанием.
+    Показывает динамику веса вместе с данными о потреблении калорий.
+    
+    Args:
+        user_id: Идентификатор пользователя
+        days: Период анализа в днях (по умолчанию 14)
+    
+    Returns:
+        dict: Комбинированный анализ веса и питания
+    """
+    try:
+        conn = _get_connection()
+        cursor = conn.cursor()
+        
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+        start_str = start_date.strftime('%Y-%m-%d')
+        end_str = end_date.strftime('%Y-%m-%d')
+        
+        # Получаем вес
+        cursor.execute('''
+            SELECT date, weight FROM weight_log
+            WHERE user_id = ? AND date BETWEEN ? AND ?
+            ORDER BY date
+        ''', (user_id, start_str, end_str))
+        weight_rows = cursor.fetchall()
+        
+        # Получаем питание (агрегированное по дням)
+        cursor.execute('''
+            SELECT date, 
+                   SUM(calories) as calories,
+                   SUM(protein) as protein,
+                   SUM(fat) as fat,
+                   SUM(carbs) as carbs
+            FROM meals
+            WHERE user_id = ? AND date BETWEEN ? AND ?
+            GROUP BY date
+            ORDER BY date
+        ''', (user_id, start_str, end_str))
+        nutrition_rows = cursor.fetchall()
+        
+        # Получаем цели пользователя
+        cursor.execute('SELECT daily_calories FROM users WHERE user_id = ?', (user_id,))
+        user_row = cursor.fetchone()
+        daily_goal = user_row['daily_calories'] if user_row else 2000
+        
+        conn.close()
+        
+        # Собираем данные по дням
+        weight_data = {row['date']: row['weight'] for row in weight_rows}
+        nutrition_data = {row['date']: {
+            'calories': row['calories'] or 0,
+            'protein': row['protein'] or 0,
+            'fat': row['fat'] or 0,
+            'carbs': row['carbs'] or 0
+        } for row in nutrition_rows}
+        
+        # Комбинируем данные
+        combined = []
+        all_dates = sorted(set(weight_data.keys()) | set(nutrition_data.keys()))
+        
+        for date in all_dates:
+            entry = {"date": date}
+            if date in weight_data:
+                entry["weight"] = weight_data[date]
+            if date in nutrition_data:
+                entry["calories"] = round(nutrition_data[date]['calories'], 0)
+                entry["protein"] = round(nutrition_data[date]['protein'], 1)
+                entry["deficit_surplus"] = round(daily_goal - nutrition_data[date]['calories'], 0)
+            combined.append(entry)
+        
+        # Аналитика
+        if len(weight_data) >= 2:
+            weights = list(weight_data.values())
+            first_weight = weights[0]
+            last_weight = weights[-1]
+            weight_change = last_weight - first_weight
+        else:
+            weight_change = None
+            first_weight = None
+            last_weight = None
+        
+        if nutrition_data:
+            calories_list = [d['calories'] for d in nutrition_data.values()]
+            avg_calories = sum(calories_list) / len(calories_list)
+            avg_deficit = daily_goal - avg_calories
+        else:
+            avg_calories = None
+            avg_deficit = None
+        
+        # Рассчёт: при дефиците ~7700 ккал теряется ~1 кг
+        expected_change = None
+        if avg_deficit is not None and len(nutrition_data) > 0:
+            total_deficit = avg_deficit * len(nutrition_data)
+            expected_change = round(-total_deficit / 7700, 2)  # минус = потеря веса
+        
+        return {
+            "status": "success",
+            "period": f"{start_str} — {end_str}",
+            "daily_goal": daily_goal,
+            "daily_data": combined,
+            "summary": {
+                "weight_entries": len(weight_data),
+                "nutrition_entries": len(nutrition_data),
+                "weight_change": round(weight_change, 2) if weight_change is not None else None,
+                "start_weight": round(first_weight, 1) if first_weight else None,
+                "current_weight": round(last_weight, 1) if last_weight else None,
+                "avg_daily_calories": round(avg_calories, 0) if avg_calories else None,
+                "avg_daily_deficit": round(avg_deficit, 0) if avg_deficit else None,
+                "expected_weight_change": expected_change
+            },
+            "insight": _generate_weight_insight(weight_change, expected_change, avg_deficit)
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Ошибка анализа: {str(e)}"
+        }
+
+
+def _generate_weight_insight(weight_change, expected_change, avg_deficit):
+    """Генерирует инсайт на основе данных о весе и питании."""
+    if weight_change is None or expected_change is None:
+        return "Недостаточно данных для анализа. Продолжай записывать вес и питание!"
+    
+    # Сравниваем фактическое изменение веса с ожидаемым
+    diff = weight_change - expected_change
+    
+    if avg_deficit > 0:  # Дефицит калорий
+        if weight_change < 0:
+            if abs(diff) < 0.5:
+                return "✅ Отлично! Вес снижается в соответствии с дефицитом калорий."
+            elif weight_change < expected_change:
+                return "🎯 Вес снижается быстрее ожидаемого. Возможно, есть незамеченные источники активности или воды."
+            else:
+                return "📊 Вес снижается медленнее ожидаемого. Проверь точность записей еды."
+        else:
+            return "⚠️ При дефиците калорий вес растёт. Возможны: задержка воды, неточный учёт еды, или период адаптации."
+    
+    elif avg_deficit < 0:  # Профицит калорий
+        if weight_change > 0:
+            if abs(diff) < 0.5:
+                return "💪 Вес набирается в соответствии с профицитом калорий."
+            else:
+                return "📊 Набор веса отличается от ожидаемого. Нормально при колебаниях воды."
+        else:
+            return "🔥 Несмотря на профицит, вес не растёт. Возможно, высокий уровень активности."
+    
+    else:
+        return "⚖️ Калории примерно соответствуют поддержанию веса."
+
+
+def delete_weight(user_id: str, date: Optional[str] = None) -> dict:
+    """
+    Удаляет запись о весе. Если дата не указана — удаляет последнюю.
+    
+    Args:
+        user_id: Идентификатор пользователя
+        date: Дата записи в формате YYYY-MM-DD (опционально)
+    
+    Returns:
+        dict: Статус операции
+    """
+    try:
+        conn = _get_connection()
+        cursor = conn.cursor()
+        
+        if date:
+            cursor.execute('''
+                SELECT id, date, weight FROM weight_log 
+                WHERE user_id = ? AND date = ?
+            ''', (user_id, date))
+        else:
+            cursor.execute('''
+                SELECT id, date, weight FROM weight_log 
+                WHERE user_id = ? 
+                ORDER BY date DESC LIMIT 1
+            ''', (user_id,))
+        
+        row = cursor.fetchone()
+        
+        if row:
+            cursor.execute('DELETE FROM weight_log WHERE id = ?', (row['id'],))
+            conn.commit()
+            conn.close()
+            return {
+                "status": "success",
+                "message": f"Удалена запись о весе за {row['date']}: {row['weight']} кг"
+            }
+        else:
+            conn.close()
+            return {
+                "status": "error",
+                "message": "Запись о весе не найдена"
+            }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Ошибка удаления: {str(e)}"
+        }
 
