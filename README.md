@@ -12,6 +12,8 @@ A multi-agent system for nutrition tracking, built on the official Google ADK.
 
 ### Features:
 
+- 📸 **Photo recognition** → send a photo of your meal → Gemini Vision analyzes it (supports albums!)
+- 🎤 **Voice messages** → describe what you ate by voice → Gemini transcribes and calculates
 - 📝 **Text input** → "ate soup and bread" → CPFC calculation
 - ⚖️ **Weight tracking** → daily weigh-ins with nutrition correlation analysis
 - 📊 **Statistics** → daily/weekly summary with actual vs. target progress
@@ -29,12 +31,18 @@ A multi-agent system for nutrition tracking, built on the official Google ADK.
 ## 🏗️ Architecture
 
 ```
+          ┌─────────┐  ┌─────────┐  ┌─────────┐
+          │  📸     │  │  🎤     │  │  ✍️     │
+          │ Photo   │  │ Voice   │  │ Text    │
+          └────┬────┘  └────┬────┘  └────┬────┘
+               └───────────┬───────────┘
+                           ▼
 ┌─────────────────────────────────────────────────────────┐
 │                    ROOT AGENT                           │
 │                 (nutrition_tracker)                     │
 │                                                         │
-│  Coordinates the system, processes requests            │
-│  Model: Gemini 2.0 Flash                               │
+│  Coordinates the system, processes multimodal input    │
+│  Model: Gemini 2.0 Flash (Vision + Audio + Text)       │
 └─────────────────────────────────────────────────────────┘
                            │
          ┌─────────────────┼─────────────────┐
@@ -202,7 +210,28 @@ python -m nutrition_tracker.telegram_bot
 
 ### Example messages:
 
-**Recording meals:**
+**Photo recognition:**
+```
+📸 [send photo of your meal]
+→ 📸 Analyzing photo...
+→ Recognized: Chicken with rice
+   Chicken breast: 250 kcal | P: 40g | F: 8g | C: 0g
+   Rice (150g): 200 kcal | P: 4g | F: 1g | C: 45g
+   Total: 450 kcal | P: 44g | F: 9g | C: 45g
+   
+   Save to diary? 📝
+```
+
+**Voice messages:**
+```
+🎤 [voice: "had chicken with mushrooms and rice"]
+→ 🎤 Got it: chicken with mushrooms and rice
+   Total: 550 kcal | P: 34g | F: 21g | C: 55g
+   
+   Save to diary? 📝
+```
+
+**Recording meals (text):**
 ```
 Ate 2 eggs and avocado toast
 → ✅ Recorded! #1 🍳 2 eggs and toast — 380 kcal
@@ -361,6 +390,8 @@ README.md                 # Documentation
 
 ## 🛡️ Features
 
+- **Multimodal input**: Photos (Gemini Vision), voice (Gemini Audio), and text
+- **Album support**: Send multiple photos of the same dish — they'll be analyzed together
 - **Duplicate protection**: If similar food was recorded in the last 5 minutes — the bot will warn
 - **Markdown fallback**: If formatting breaks — message will be sent as plain text
 - **Persistence**: Data is stored in SQLite, not lost on restart
@@ -368,28 +399,6 @@ README.md                 # Documentation
 - **Weight-nutrition analysis**: Correlates weight changes with calorie intake
 - **Long-term memory**: Remembers allergies, preferences, and habits for personalization
 - **Observability**: OpenTelemetry tracing for debugging and monitoring
-
----
-
-## 📈 Metrics
-
-- **Architecture**: Multi-agent with root + 3 sub-agents + isolated search agent
-- **Tools**: 19 custom tools (search uses isolated agent with google_search)
-- **Integrations**: Telegram, SQLite, Google Sheets, Google Search
-- **Key concepts**: Multi-agent, Custom Tools, Sessions, Long-term Memory, Observability, Built-in Tools
-- **Calculation accuracy**: ~90% (depends on description)
-
----
-
-## 🔮 Possible Improvements
-
-- [ ] Photo food recognition (Gemini Vision)
-- [ ] Voice messages (Gemini Audio)
-- [ ] Progress charts
-- [ ] Recipe recommendations
-- [ ] A2A protocol for agent communication
-- [ ] CSV data export
-- [ ] Weight goal tracking and predictions
 
 ---
 
