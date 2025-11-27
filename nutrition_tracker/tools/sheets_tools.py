@@ -3,6 +3,7 @@ Tools для работы с Google Sheets.
 Эти функции используются агентами как инструменты (tools).
 """
 import os
+import json
 from datetime import datetime, timedelta
 from typing import Optional
 import gspread
@@ -24,17 +25,25 @@ def _get_spreadsheet():
     global _client, _spreadsheet
     
     if _spreadsheet is None:
-        # Ищем credentials относительно модуля (папка nutrition_tracker)
-        module_dir = os.path.dirname(os.path.dirname(__file__))  # nutrition_tracker/
-        default_creds = os.path.join(module_dir, 'ai-n8n-test-1-471818-5774c44e8b76.json')
-        
-        creds_file = os.getenv('GOOGLE_SHEETS_CREDENTIALS_FILE', default_creds)
         spreadsheet_id = os.getenv('SPREADSHEET_ID', '')
         
         if not spreadsheet_id:
             raise ValueError("SPREADSHEET_ID не задан в переменных окружения")
         
-        creds = Credentials.from_service_account_file(creds_file, scopes=SCOPES)
+        # Пробуем получить credentials из переменной окружения (Cloud Run)
+        creds_json = os.getenv('GOOGLE_SHEETS_CREDENTIALS')
+        
+        if creds_json:
+            # Cloud Run: credentials в переменной окружения как JSON строка
+            creds_info = json.loads(creds_json)
+            creds = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
+        else:
+            # Локально: credentials из файла
+            module_dir = os.path.dirname(os.path.dirname(__file__))
+            default_creds = os.path.join(module_dir, 'ai-n8n-test-1-471818-5774c44e8b76.json')
+            creds_file = os.getenv('GOOGLE_SHEETS_CREDENTIALS_FILE', default_creds)
+            creds = Credentials.from_service_account_file(creds_file, scopes=SCOPES)
+        
         _client = gspread.authorize(creds)
         _spreadsheet = _client.open_by_key(spreadsheet_id)
     

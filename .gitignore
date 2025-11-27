@@ -63,5 +63,7 @@ htmlcov/
 nutrition-tracker-bot/
 calorie_tracker_agent/
 
+# Examples
 examples/
+
 

@@ -1,0 +1,41 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv
+ENV
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Database (will be created fresh in container)
+*.db
+
+# Docs
+*.md
+!README.md
+
+# Examples
+examples/
+
+# Local env file (secrets go to Cloud Run env vars)
+.env
+
+# Jupyter
+*.ipynb
+.ipynb_checkpoints
+
+# OS
+.DS_Store
+Thumbs.db
+

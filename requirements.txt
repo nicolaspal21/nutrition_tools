@@ -17,3 +17,5 @@ python-dotenv>=1.0.0
 # Image processing (optional, for future photo support)
 Pillow>=10.0.0
 
+# Webhook server for Cloud Run
+aiohttp>=3.9.0
