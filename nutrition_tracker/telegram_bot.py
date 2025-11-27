@@ -64,7 +64,7 @@ def get_runner():
         else:
             logger.info(f"🧠 Using Vertex AI Session Service (Project: {project_id}, Location: {location})")
             _session_service = VertexAiSessionService(
-                project_id=project_id,
+                project=project_id,
                 location=location
             )
             
