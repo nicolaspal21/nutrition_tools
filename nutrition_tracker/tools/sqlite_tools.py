@@ -1,23 +1,21 @@
 """
-Tools для работы с SQLite (временная замена Google Sheets).
+Tools для работы с SQLite / Turso.
+Автоматически использует Turso (облако) если заданы TURSO_URL и TURSO_TOKEN,
+иначе использует локальный SQLite.
 """
 import os
-import sqlite3
 from datetime import datetime, timedelta
 from typing import Optional
 
-# Путь к базе данных
-DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'nutrition.db')
+from .database import get_connection
 
-def _get_connection():
-    """Получает подключение к SQLite"""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+# Флаг инициализации
+_db_initialized = False
+
 
 def _init_db():
     """Инициализирует таблицы если их нет"""
-    conn = _get_connection()
+    conn = get_connection()  # Напрямую, без _ensure_db
     cursor = conn.cursor()
     
     # Таблица приемов пищи
@@ -70,8 +68,22 @@ def _init_db():
     conn.commit()
     conn.close()
 
-# Инициализируем БД при импорте
-_init_db()
+
+def _ensure_db():
+    """Ленивая инициализация БД при первом использовании."""
+    global _db_initialized
+    if not _db_initialized:
+        try:
+            _init_db()
+            _db_initialized = True
+        except Exception as e:
+            print(f"[DB] Init error (will retry): {e}")
+
+
+def _get_connection():
+    """Получает подключение к базе данных (Turso или SQLite)"""
+    _ensure_db()
+    return get_connection()
 
 
 def save_meal(

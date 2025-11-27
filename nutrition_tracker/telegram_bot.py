@@ -18,7 +18,7 @@ from telegram.ext import (
 )
 
 from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
+from google.adk.sessions import VertexAiSessionService
 from google.genai import types
 
 # Загружаем переменные окружения
@@ -54,7 +54,20 @@ def get_runner():
     if _runner is None:
         from .agent import root_agent
         
-        _session_service = InMemorySessionService()
+        project_id = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("PROJECT_ID")
+        location = os.getenv("GOOGLE_CLOUD_LOCATION") or os.getenv("REGION", "us-central1")
+        
+        if not project_id:
+            logger.warning("⚠️ GOOGLE_CLOUD_PROJECT not set! Using InMemorySessionService.")
+            from google.adk.sessions import InMemorySessionService
+            _session_service = InMemorySessionService()
+        else:
+            logger.info(f"🧠 Using Vertex AI Session Service (Project: {project_id}, Location: {location})")
+            _session_service = VertexAiSessionService(
+                project_id=project_id,
+                location=location
+            )
+            
         _runner = Runner(
             agent=root_agent,
             app_name="nutrition_tracker",
@@ -570,6 +583,11 @@ def main():
         application.add_handler(MessageHandler(filters.VOICE, handle_voice))
         
         logger.info("🚀 Запуск Telegram бота...")
+        
+        # Логируем информацию о базе данных
+        from .tools.database import get_db_info
+        logger.info(f"💾 Database: {get_db_info()}")
+        
         application.run_polling(allowed_updates=Update.ALL_TYPES)
     except Exception as e:
         logger.error(f"❌ Ошибка запуска: {e}")

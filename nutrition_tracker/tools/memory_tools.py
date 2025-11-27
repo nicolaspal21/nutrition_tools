@@ -8,21 +8,16 @@ Long-term Memory (Memory Bank) для агентов.
 - habit: привычки питания ("завтракает в 8 утра")
 - fact: прочие факты ("готовит на неделю вперед")
 """
-import sqlite3
 import json
 from datetime import datetime
 from typing import Optional
-import os
 
-# Путь к базе данных
-DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'nutrition.db')
+from .database import get_connection
 
 
 def _get_connection():
-    """Получает подключение к SQLite"""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Получает подключение к базе данных (Turso или SQLite)"""
+    return get_connection()
 
 
 def _init_memory_table():

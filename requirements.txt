@@ -19,3 +19,6 @@ Pillow>=10.0.0
 
 # Webhook server for Cloud Run
 aiohttp>=3.9.0
+
+# Turso SQLite (Cloud Database)
+libsql-experimental>=0.0.47
