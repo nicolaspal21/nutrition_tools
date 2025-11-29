@@ -21,4 +21,4 @@ Pillow>=10.0.0
 aiohttp>=3.9.0
 
 # Turso SQLite (Cloud Database)
-libsql-experimental>=0.0.47
+libsql-client>=0.3.1

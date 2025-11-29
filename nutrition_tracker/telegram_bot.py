@@ -53,6 +53,10 @@ def get_runner():
     
     if _runner is None:
         from .agent import root_agent
+        from .tools.memory_tools import init_memory_db
+        
+        # Инициализируем БД памяти (безопасно)
+        init_memory_db()
         
         project_id = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("PROJECT_ID")
         location = os.getenv("GOOGLE_CLOUD_LOCATION") or os.getenv("REGION", "us-central1")

@@ -49,49 +49,72 @@ async def on_startup(app: web.Application):
     """Инициализация при старте"""
     global application
     
-    token = os.getenv('TELEGRAM_BOT_TOKEN')
-    webhook_url = os.getenv('WEBHOOK_URL')
+    try:
+        token = os.getenv('TELEGRAM_BOT_TOKEN')
+        webhook_url = os.getenv('WEBHOOK_URL')
+        
+        if not token:
+            raise ValueError("TELEGRAM_BOT_TOKEN not set!")
+        
+        # Импортируем хендлеры из telegram_bot.py
+        from .telegram_bot import (
+            start, help_command, today_command, week_command,
+            goals_command, undo_command, sync_command,
+            handle_text, handle_photo, handle_voice
+        )
+        
+        # Создаём Application
+        application = Application.builder().token(token).build()
+        
+        # Регистрируем хендлеры команд
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("today", today_command))
+        application.add_handler(CommandHandler("week", week_command))
+        application.add_handler(CommandHandler("goals", goals_command))
+        application.add_handler(CommandHandler("undo", undo_command))
+        application.add_handler(CommandHandler("sync", sync_command))
+        
+        # Инициализируем БД сразу при старте
+        from .tools.sqlite_tools import _init_db
+        _init_db()
+        logger.info("✅ Database tables initialized")
+        
+        # Регистрируем хендлеры сообщений
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+        application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+        application.add_handler(MessageHandler(filters.VOICE, handle_voice))
+        
+        # Инициализируем бота
+        await application.initialize()
+        await application.start()
+        
+        # Устанавливаем webhook
+        if webhook_url:
+            # Запускаем установку вебхука в фоне, чтобы не блокировать старт сервера
+            asyncio.create_task(_setup_webhook_background(application, webhook_url))
+        else:
+            logger.warning("⚠️ WEBHOOK_URL not set! Set it after first deploy.")
+        
+        logger.info("🚀 Nutrition Tracker webhook server started!")
+    except Exception as e:
+        logger.critical(f"🔥 Critical error in on_startup: {e}", exc_info=True)
+        raise
+
+
+async def _setup_webhook_background(application: Application, webhook_url: str):
+    """Установка вебхука в фоне с повторными попытками"""
+    webhook_full_url = f"{webhook_url}/webhook"
+    logger.info(f"⏳ Scheduling webhook setup for {webhook_full_url}...")
     
-    if not token:
-        raise ValueError("TELEGRAM_BOT_TOKEN not set!")
+    # Даем серверу время запуститься
+    await asyncio.sleep(2)
     
-    # Импортируем хендлеры из telegram_bot.py
-    from .telegram_bot import (
-        start, help_command, today_command, week_command,
-        goals_command, undo_command, sync_command,
-        handle_text, handle_photo, handle_voice
-    )
-    
-    # Создаём Application
-    application = Application.builder().token(token).build()
-    
-    # Регистрируем хендлеры команд
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("today", today_command))
-    application.add_handler(CommandHandler("week", week_command))
-    application.add_handler(CommandHandler("goals", goals_command))
-    application.add_handler(CommandHandler("undo", undo_command))
-    application.add_handler(CommandHandler("sync", sync_command))
-    
-    # Регистрируем хендлеры сообщений
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    application.add_handler(MessageHandler(filters.VOICE, handle_voice))
-    
-    # Инициализируем бота
-    await application.initialize()
-    await application.start()
-    
-    # Устанавливаем webhook
-    if webhook_url:
-        webhook_full_url = f"{webhook_url}/webhook"
+    try:
         await application.bot.set_webhook(url=webhook_full_url)
         logger.info(f"✅ Webhook set to {webhook_full_url}")
-    else:
-        logger.warning("⚠️ WEBHOOK_URL not set! Set it after first deploy.")
-    
-    logger.info("🚀 Nutrition Tracker webhook server started!")
+    except Exception as e:
+        logger.error(f"❌ Failed to set webhook: {e}")
 
 
 async def on_shutdown(app: web.Application):

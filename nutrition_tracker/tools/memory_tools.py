@@ -20,35 +20,38 @@ def _get_connection():
     return get_connection()
 
 
-def _init_memory_table():
+def init_memory_db():
     """Инициализирует таблицу памяти если её нет"""
-    conn = _get_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS memory_bank (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT NOT NULL,
-            memory_type TEXT NOT NULL,
-            content TEXT NOT NULL,
-            metadata TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Индекс для быстрого поиска по пользователю
-    cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_memory_user 
-        ON memory_bank(user_id)
-    ''')
-    
-    conn.commit()
-    conn.close()
+    try:
+        conn = _get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS memory_bank (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                memory_type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                metadata TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Индекс для быстрого поиска по пользователю
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_memory_user 
+            ON memory_bank(user_id)
+        ''')
+        
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ Ошибка инициализации таблицы памяти: {e}")
 
 
-# Инициализируем таблицу при импорте
-_init_memory_table()
+# Инициализируем таблицу при импорте - УБРАНО, чтобы не крашить при старте
+# init_memory_db()
 
 
 def store_memory(

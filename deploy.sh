@@ -48,6 +48,7 @@ gcloud config set project $PROJECT_ID 2>/dev/null || {
 echo -e "${YELLOW}🔧 Включаю необходимые API...${NC}"
 gcloud services enable run.googleapis.com --quiet
 gcloud services enable cloudbuild.googleapis.com --quiet
+gcloud services enable aiplatform.googleapis.com --quiet
 
 # Запрашиваем секреты если не заданы
 if [ -z "$GOOGLE_API_KEY" ]; then
@@ -60,6 +61,16 @@ if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
     read -s TELEGRAM_BOT_TOKEN
 fi
 
+if [ -z "$TURSO_URL" ]; then
+    echo -e "${YELLOW}🔐 Введи TURSO_URL:${NC}"
+    read -s TURSO_URL
+fi
+
+if [ -z "$TURSO_TOKEN" ]; then
+    echo -e "${YELLOW}🔐 Введи TURSO_TOKEN:${NC}"
+    read -s TURSO_TOKEN
+fi
+
 # Первый деплой (без WEBHOOK_URL)
 echo -e "${GREEN}🚀 Деплою на Cloud Run...${NC}"
 gcloud run deploy $SERVICE_NAME \
@@ -68,6 +79,10 @@ gcloud run deploy $SERVICE_NAME \
     --allow-unauthenticated \
     --set-env-vars="GOOGLE_API_KEY=$GOOGLE_API_KEY" \
     --set-env-vars="TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN" \
+    --set-env-vars="TURSO_URL=$TURSO_URL" \
+    --set-env-vars="TURSO_TOKEN=$TURSO_TOKEN" \
+    --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
+    --set-env-vars="GOOGLE_CLOUD_LOCATION=$REGION" \
     --set-env-vars="GOOGLE_GENAI_USE_VERTEXAI=FALSE" \
     --memory=512Mi \
     --cpu=1 \
