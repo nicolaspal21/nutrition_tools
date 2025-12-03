@@ -221,9 +221,11 @@ def get_meals_by_date(user_id: str, date: str) -> dict:
         meals = []
         totals = {"calories": 0, "protein": 0, "fat": 0, "carbs": 0}
         
-        for row in rows:
+        # Добавляем дневную нумерацию (начинается с 1 каждый день)
+        for idx, row in enumerate(rows, start=1):
             meal = {
-                "id": row['id'],
+                "id": row['id'],  # Глобальный ID из БД (для удаления/редактирования)
+                "daily_number": idx,  # Дневной порядковый номер (для отображения)
                 "time": row['time'],
                 "meal_type": row['meal_type'],
                 "description": row['description'],
@@ -238,6 +240,10 @@ def get_meals_by_date(user_id: str, date: str) -> dict:
             totals["fat"] += meal["fat"]
             totals["carbs"] += meal["carbs"]
         
+        # Получаем цели пользователя для отображения прогресса
+        goals_result = get_user_goals(user_id)
+        goals = goals_result.get("goals", {}) if goals_result.get("status") == "success" else None
+        
         return {
             "status": "success",
             "date": date,
@@ -248,7 +254,8 @@ def get_meals_by_date(user_id: str, date: str) -> dict:
                 "protein": round(totals["protein"], 1),
                 "fat": round(totals["fat"], 1),
                 "carbs": round(totals["carbs"], 1)
-            }
+            },
+            "goals": goals  # Включаем цели для консистентности
         }
     except Exception as e:
         return {
@@ -337,6 +344,15 @@ def get_user_goals(user_id: str) -> dict:
     Returns:
         dict: Цели пользователя (калории, БЖУ)
     """
+    # Дефолтные цели на случай ошибки
+    default_goals = {
+        "goal_type": "maintenance",
+        "daily_calories": 2000,
+        "daily_protein": 150,
+        "daily_fat": 70,
+        "daily_carbs": 200
+    }
+    
     try:
         conn = _get_connection()
         cursor = conn.cursor()
@@ -345,6 +361,7 @@ def get_user_goals(user_id: str) -> dict:
         row = cursor.fetchone()
         
         if row:
+            print(f"[DB] Загружены цели для пользователя {user_id}")
             conn.close()
             return {
                 "status": "success",
@@ -359,14 +376,7 @@ def get_user_goals(user_id: str) -> dict:
             }
         
         # Создаем нового пользователя с дефолтными целями
-        default_goals = {
-            "goal_type": "maintenance",
-            "daily_calories": 2000,
-            "daily_protein": 150,
-            "daily_fat": 70,
-            "daily_carbs": 200
-        }
-        
+        print(f"[DB] Создаю нового пользователя {user_id} с дефолтными целями")
         cursor.execute('''
             INSERT INTO users (user_id, goal_type, daily_calories, daily_protein, daily_fat, daily_carbs)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -383,9 +393,14 @@ def get_user_goals(user_id: str) -> dict:
             "note": "Созданы цели по умолчанию"
         }
     except Exception as e:
+        # При любой ошибке возвращаем дефолтные цели чтобы бот не сломался
+        print(f"[DB] ⚠️ Ошибка получения целей для {user_id}: {str(e)}")
+        print(f"[DB] Возвращаю дефолтные цели как fallback")
         return {
-            "status": "error",
-            "message": f"Ошибка получения целей: {str(e)}"
+            "status": "success",
+            "user_id": user_id,
+            "goals": default_goals,
+            "note": "Используются дефолтные цели (ошибка БД)"
         }
 
 
