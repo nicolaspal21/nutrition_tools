@@ -81,7 +81,7 @@ from .tools.search_tools import search_nutrition_info
 # Агент для анализа еды и расчета КБЖУ
 nutrition_analyst = Agent(
     name="nutrition_analyst",
-    model=Gemini(model="gemini-2.0-flash", retry_options=retry_config),
+    model=Gemini(model="gemini-3-flash-preview", retry_options=retry_config),
     description="Эксперт по анализу еды и расчету калорий, белков, жиров и углеводов.",
     instruction="""Ты профессиональный нутрициолог-аналитик.
 
@@ -108,7 +108,7 @@ nutrition_analyst = Agent(
 # Агент-коуч для рекомендаций
 nutrition_coach = Agent(
     name="nutrition_coach",
-    model=Gemini(model="gemini-2.0-flash", retry_options=retry_config),
+    model=Gemini(model="gemini-3-flash-preview", retry_options=retry_config),
     description="Персональный коуч по питанию, дает мотивирующие рекомендации.",
     instruction="""Ты дружелюбный и мотивирующий коуч по питанию.
 
@@ -134,7 +134,7 @@ nutrition_coach = Agent(
 # Агент для работы с данными
 data_manager = Agent(
     name="data_manager",
-    model=Gemini(model="gemini-2.0-flash", retry_options=retry_config),
+    model=Gemini(model="gemini-3-flash-preview", retry_options=retry_config),
     description="Управляет данными пользователя: сохранение еды, вес, получение истории, цели.",
     instruction="""Ты менеджер данных для системы отслеживания питания и веса.
 
@@ -186,7 +186,7 @@ data_manager = Agent(
 
 root_agent = Agent(
     name="nutrition_tracker",
-    model=Gemini(model="gemini-2.0-flash", retry_options=retry_config),
+    model=Gemini(model="gemini-3-flash-preview", retry_options=retry_config),
     description="""
     AI-помощник для отслеживания питания и веса. 
     Анализирует еду, считает калории, отслеживает вес,

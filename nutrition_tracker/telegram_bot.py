@@ -18,7 +18,6 @@ from telegram.ext import (
 )
 
 from google.adk.runners import Runner
-from google.adk.sessions import VertexAiSessionService
 from google.genai import types
 
 # Загружаем переменные окружения
@@ -58,19 +57,11 @@ def get_runner():
         # Инициализируем БД памяти (безопасно)
         init_memory_db()
         
-        project_id = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("PROJECT_ID")
-        location = os.getenv("GOOGLE_CLOUD_LOCATION") or os.getenv("REGION", "us-central1")
-        
-        if not project_id:
-            logger.warning("⚠️ GOOGLE_CLOUD_PROJECT not set! Using InMemorySessionService.")
-            from google.adk.sessions import InMemorySessionService
-            _session_service = InMemorySessionService()
-        else:
-            logger.info(f"🧠 Using Vertex AI Session Service (Project: {project_id}, Location: {location})")
-            _session_service = VertexAiSessionService(
-                project=project_id,
-                location=location
-            )
+        # Используем InMemorySessionService, так как VertexAiSessionService требует ReasoningEngine
+        # который не используется в этом проекте (GOOGLE_GENAI_USE_VERTEXAI=FALSE)
+        from google.adk.sessions import InMemorySessionService
+        logger.info("🧠 Using InMemory Session Service")
+        _session_service = InMemorySessionService()
             
         _runner = Runner(
             agent=root_agent,

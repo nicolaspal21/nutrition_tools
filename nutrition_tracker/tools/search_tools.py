@@ -28,7 +28,7 @@ retry_config = types.HttpRetryOptions(
 # Отдельный агент ТОЛЬКО для поиска (без других tools)
 _search_agent = Agent(
     name="search_agent",
-    model=Gemini(model="gemini-2.0-flash", retry_options=retry_config),
+    model=Gemini(model="gemini-3-flash-preview", retry_options=retry_config),
     description="Ищет информацию о калорийности продуктов и питании в интернете через Google.",
     instruction="""Ты помощник по поиску информации о питании.
 
