@@ -16,6 +16,8 @@ A multi-agent system for nutrition tracking, built on the official Google ADK.
 - 🎤 **Voice messages** → describe what you ate by voice → Gemini transcribes and calculates
 - 📝 **Text input** → "ate soup and bread" → CPFC calculation
 - ⚖️ **Weight tracking** → daily weigh-ins with nutrition correlation analysis
+- 🏃 **Workout tracking** → log workouts and burned calories
+- 📦 **CSV Export** → download your data (meals, weight, workouts) as CSV files
 - 📊 **Statistics** → daily/weekly summary with actual vs. target progress
 - 🎯 **Goals** → personalized recommendations
 - ✏️ **Editing** → modify and delete entries by ID

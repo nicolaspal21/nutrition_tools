@@ -59,7 +59,7 @@ async def on_startup(app: web.Application):
         # Импортируем хендлеры из telegram_bot.py
         from .telegram_bot import (
             start, help_command, today_command, week_command,
-            goals_command, undo_command, sync_command,
+            goals_command, undo_command, export_command,
             handle_text, handle_photo, handle_voice
         )
         
@@ -73,7 +73,7 @@ async def on_startup(app: web.Application):
         application.add_handler(CommandHandler("week", week_command))
         application.add_handler(CommandHandler("goals", goals_command))
         application.add_handler(CommandHandler("undo", undo_command))
-        application.add_handler(CommandHandler("sync", sync_command))
+        application.add_handler(CommandHandler("export", export_command))
         
         # Инициализируем БД сразу при старте
         from .tools.sqlite_tools import _init_db

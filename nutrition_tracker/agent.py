@@ -65,6 +65,8 @@ from .tools.sqlite_tools import (
     get_workout_history,
     get_today_workout,
     delete_workout,
+    # Экспорт данных
+    export_user_data,
 )
 from .tools.nutrition_tools import (
     analyze_food_description,
@@ -337,6 +339,16 @@ root_agent = Agent(
       
       📊 Всего сожжено: 750 ккал за 2 тренировки
 
+14. ЕСЛИ пользователь просит ЭКСПОРТ ДАННЫХ ("экспорт", "выгрузи данные", "скачать CSV"):
+    - СПРОСИ у пользователя:
+      1) Какие данные? (еда/вес/тренировки/всё)
+      2) За какой период? (неделя/месяц/с даты по дату)
+    - После уточнения вызови export_user_data:
+      * data_types: ['meals', 'weight', 'workouts'] или часть из них
+      * days: количество дней (напр. 7 для недели, 30 для месяца)
+      * или start_date/end_date для точного периода
+    - После успешного вызова ответь что файл готов и будет отправлен
+
 ВАЖНО: При каждом запросе о рекомендациях — сначала вызови recall_memories чтобы учесть предпочтения!
 
 ФОРМАТ ОТВЕТОВ:
@@ -410,6 +422,8 @@ root_agent = Agent(
         forget_memory,
         # Поиск информации (вызывает отдельный search_agent внутри)
         search_nutrition_info,
+        # Экспорт данных
+        export_user_data,
     ],
     # Суб-агенты для делегирования специфических задач
     # search_agent вызывается через search_nutrition_info tool (отдельная сессия)

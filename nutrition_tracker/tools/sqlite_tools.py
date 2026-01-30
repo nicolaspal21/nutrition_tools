@@ -12,6 +12,10 @@ from .database import get_connection
 # Флаг инициализации
 _db_initialized = False
 
+# Кэш для экспортов (user_id -> dict с CSV данными)
+# Заполняется в export_user_data, читается и очищается в telegram_bot
+_pending_exports: dict = {}
+
 
 def _init_db():
     """Инициализирует таблицы если их нет"""
@@ -1315,3 +1319,171 @@ def delete_workout(user_id: str, date: Optional[str] = None) -> dict:
             "status": "error",
             "message": f"Ошибка удаления: {str(e)}"
         }
+
+
+# ============================================================
+# ФУНКЦИИ ЭКСПОРТА ДАННЫХ
+# ============================================================
+
+def export_user_data(
+    user_id: str,
+    data_types: list[str] = None,
+    start_date: str = None,
+    end_date: str = None,
+    days: int = 30
+) -> dict:
+    """
+    Экспортирует данные пользователя в CSV формат.
+    
+    Args:
+        user_id: Идентификатор пользователя
+        data_types: Список типов данных для экспорта ['meals', 'weight', 'workouts'] 
+                    Если не указано — все типы
+        start_date: Начальная дата в формате YYYY-MM-DD (опционально)
+        end_date: Конечная дата в формате YYYY-MM-DD (опционально, по умолчанию сегодня)
+        days: Количество дней если start_date не указан (по умолчанию 30)
+    
+    Returns:
+        dict: CSV контент и метаданные
+    """
+    try:
+        conn = _get_connection()
+        cursor = conn.cursor()
+        
+        # Определяем период
+        if end_date:
+            end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+        else:
+            end_dt = datetime.now()
+        
+        if start_date:
+            start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+        else:
+            start_dt = end_dt - timedelta(days=days)
+        
+        start_str = start_dt.strftime('%Y-%m-%d')
+        end_str = end_dt.strftime('%Y-%m-%d')
+        
+        # Типы данных
+        if not data_types:
+            data_types = ['meals', 'weight', 'workouts']
+        
+        csv_lines = []
+        stats = {}
+        
+        # Экспорт приёмов пищи
+        if 'meals' in data_types:
+            csv_lines.append("=== ПРИЁМЫ ПИЩИ ===")
+            csv_lines.append("Дата,Время,Тип,Описание,Калории,Белки,Жиры,Углеводы")
+            
+            cursor.execute('''
+                SELECT date, time, meal_type, description, calories, protein, fat, carbs
+                FROM meals
+                WHERE user_id = ? AND date BETWEEN ? AND ?
+                ORDER BY date DESC, time DESC
+            ''', (user_id, start_str, end_str))
+            
+            rows = cursor.fetchall()
+            stats['meals'] = len(rows)
+            
+            for row in rows:
+                # Экранируем описание (может содержать запятые)
+                desc = (row['description'] or '').replace('"', '""')
+                csv_lines.append(
+                    f"{row['date']},{row['time']},{row['meal_type'] or ''},\"{desc}\","
+                    f"{row['calories'] or 0:.0f},{row['protein'] or 0:.1f},"
+                    f"{row['fat'] or 0:.1f},{row['carbs'] or 0:.1f}"
+                )
+            csv_lines.append("")
+        
+        # Экспорт веса
+        if 'weight' in data_types:
+            csv_lines.append("=== ЗАПИСИ ВЕСА ===")
+            csv_lines.append("Дата,Время,Вес (кг),Заметка")
+            
+            cursor.execute('''
+                SELECT date, time, weight, note
+                FROM weight_log
+                WHERE user_id = ? AND date BETWEEN ? AND ?
+                ORDER BY date DESC
+            ''', (user_id, start_str, end_str))
+            
+            rows = cursor.fetchall()
+            stats['weight'] = len(rows)
+            
+            for row in rows:
+                note = (row['note'] or '').replace('"', '""')
+                csv_lines.append(
+                    f"{row['date']},{row['time']},{row['weight']:.1f},\"{note}\""
+                )
+            csv_lines.append("")
+        
+        # Экспорт тренировок
+        if 'workouts' in data_types:
+            csv_lines.append("=== ТРЕНИРОВКИ ===")
+            csv_lines.append("Дата,Время,Калории,Тип,Длительность (мин),Описание")
+            
+            cursor.execute('''
+                SELECT date, time, calories_burned, workout_type, duration_min, description
+                FROM workout_log
+                WHERE user_id = ? AND date BETWEEN ? AND ?
+                ORDER BY date DESC
+            ''', (user_id, start_str, end_str))
+            
+            rows = cursor.fetchall()
+            stats['workouts'] = len(rows)
+            
+            for row in rows:
+                desc = (row['description'] or '').replace('"', '""')
+                csv_lines.append(
+                    f"{row['date']},{row['time']},{row['calories_burned']:.0f},"
+                    f"{row['workout_type'] or ''},{row['duration_min'] or ''},\"{desc}\""
+                )
+            csv_lines.append("")
+        
+        conn.close()
+        
+        csv_content = "\n".join(csv_lines)
+        
+        # Формируем имя файла
+        filename = f"nutritracker_export_{end_dt.strftime('%Y%m%d')}.csv"
+        
+        # Формируем summary
+        summary_parts = []
+        if 'meals' in stats:
+            summary_parts.append(f"{stats['meals']} приёмов пищи")
+        if 'weight' in stats:
+            summary_parts.append(f"{stats['weight']} записей веса")  
+        if 'workouts' in stats:
+            summary_parts.append(f"{stats['workouts']} тренировок")
+        
+        result = {
+            "status": "success",
+            "csv_content": csv_content,
+            "filename": filename,
+            "period": f"{start_str} — {end_str}",
+            "summary": ", ".join(summary_parts) if summary_parts else "Нет данных",
+            "stats": stats,
+            "is_export": True  # Маркер для telegram_bot
+        }
+        
+        # Сохраняем в кэш для последующей отправки файла
+        _pending_exports[user_id] = result
+        
+        return result
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Ошибка экспорта: {str(e)}"
+        }
+
+
+def get_pending_export(user_id: str) -> dict:
+    """Получает ожидающий экспорт для пользователя (без удаления)."""
+    return _pending_exports.get(user_id)
+
+
+def pop_pending_export(user_id: str) -> dict:
+    """Получает и удаляет ожидающий экспорт для пользователя."""
+    return _pending_exports.pop(user_id, None)

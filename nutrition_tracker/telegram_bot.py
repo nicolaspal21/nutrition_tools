@@ -178,22 +178,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 📸 Анализировать *фото еды* — просто сфоткай блюдо!
 🎤 Понимать *голосовые* — расскажи что съел
 ✍️ Анализировать текст — напиши описание
-🔢 Считать калории и БЖУ
-💡 Давать персональные советы
+⚖️ Отслеживать *вес* и динамику
+🏃 Записывать *тренировки*
+📦 Экспортировать данные в *CSV*
 📊 Показывать статистику
 
 *Как пользоваться:*
 • 📸 Отправь фото еды
-• 🎤 Запиши голосовое "съел борщ с хлебом"
-• ✍️ Напиши: "2 яйца и тост"
+• ✍️ Напиши: "съел борщ и хлеб"
+• ⚖️ Напиши: "вес 75.5"
+• 🏃 Напиши: "тренировка 400 ккал"
 • ❓ Спроси: "что я ел сегодня?"
 
 *Команды:*
 /today — сводка за сегодня
 /week — статистика за неделю
 /goals — твои цели
-/undo — отменить последнюю запись
-/sync — перенести в Google Sheets
+/export — скачать данные в CSV
 /help — справка
 
 Давай начнем! 🚀
@@ -216,22 +217,28 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • "Съел борщ и 2 куска хлеба"
 • "На завтрак овсянка с бананом"
 
-*Вопросы о питании:*
-• "Что я ел вчера?"
-• "Сколько калорий за неделю?"
-• "Покажи статистику"
+⚖️ *Вес* — напиши: "вес 75.5" или "взвесился 74 кг"
 
-*Управление целями:*
-• "Хочу похудеть"
-• "Установи калории 1800"
+🏃 *Тренировки* — напиши: "тренировка 400 ккал" или "пробежка 30 минут"
+
+*Вопросы:*
+• "Что я ел сегодня?"
+• "Мой вес?" / "история веса"
+• "Мои тренировки"
 
 *Команды:*
 /today — сводка за сегодня
 /week — статистика за неделю
 /goals — показать цели
 /undo — отменить последнее
-/sync — перенести данные в Google Sheets
+/export — скачать данные в CSV
 /help — эта справка
+
+*Примеры /export:*
+• `/export` — всё за 30 дней
+• `/export 7` — за неделю
+• `/export 30 meals` — только еда за месяц
+• `/export 14 weight workouts` — вес и тренировки
 
 💡 Бот использует Gemini AI для анализа фото, аудио и текста.
 """
@@ -286,22 +293,77 @@ async def undo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text(response)
 
 
-async def sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /sync — синхронизация в Google Sheets"""
+async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /export — экспорт данных в CSV"""
     user_id = str(update.effective_user.id)
     
-    # Ограничиваем доступ если ADMIN_USER_IDS задан
-    if ADMIN_USER_IDS and user_id not in ADMIN_USER_IDS:
-        await update.message.reply_text("❌ У вас нет доступа к этой команде")
-        return
+    # Парсим аргументы: /export [days] [типы]
+    # Примеры: /export, /export 7, /export 30 meals, /export 14 weight workouts
+    args = context.args if context.args else []
     
-    status_msg = await update.message.reply_text("🔄 Синхронизирую данные в Google Sheets...")
+    days = 30  # по умолчанию
+    data_types = None  # все типы
+    
+    if args:
+        # Первый аргумент - количество дней
+        try:
+            days = int(args[0])
+            args = args[1:]
+        except ValueError:
+            pass
+        
+        # Остальные аргументы - типы данных
+        if args:
+            data_types = []
+            for arg in args:
+                arg_lower = arg.lower()
+                if arg_lower in ['meals', 'еда', 'food']:
+                    data_types.append('meals')
+                elif arg_lower in ['weight', 'вес']:
+                    data_types.append('weight')
+                elif arg_lower in ['workouts', 'тренировки', 'workout']:
+                    data_types.append('workouts')
+    
+    status_msg = await update.message.reply_text(
+        f"📦 Готовлю экспорт за {days} дней..."
+    )
     
     try:
-        from .tools.sheets_tools import sync_from_sqlite
-        result = sync_from_sqlite()
-        await status_msg.edit_text(result["message"])
+        from .tools.sqlite_tools import export_user_data
+        result = export_user_data(
+            user_id=user_id,
+            data_types=data_types,
+            days=days
+        )
+        
+        if result.get('status') == 'error':
+            await status_msg.edit_text(f"❌ {result.get('message')}")
+            return
+        
+        csv_content = result.get('csv_content', '')
+        filename = result.get('filename', 'export.csv')
+        summary = result.get('summary', '')
+        period = result.get('period', '')
+        
+        if not csv_content.strip():
+            await status_msg.edit_text("💭 Нет данных для экспорта за указанный период")
+            return
+        
+        # Отправляем CSV файл
+        import io
+        csv_file = io.BytesIO(csv_content.encode('utf-8-sig'))  # BOM для Excel
+        csv_file.name = filename
+        
+        await status_msg.delete()
+        await update.message.reply_document(
+            document=csv_file,
+            filename=filename,
+            caption=f"📊 *Экспорт данных*\n\n📅 Период: {period}\n📝 {summary}",
+            parse_mode='Markdown'
+        )
+        
     except Exception as e:
+        logger.error(f"Error exporting data: {e}")
         await status_msg.edit_text(f"❌ Ошибка: {str(e)}")
 
 
@@ -321,9 +383,46 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             # Markdown не распарсился - отправляем plain text
             await status_msg.edit_text(response)
+        
+        # Проверяем есть ли ожидающий экспорт для отправки
+        await _send_pending_export_if_exists(user_id, update)
+        
     except Exception as e:
         logger.error(f"Error handling text: {e}")
         await status_msg.edit_text(f"❌ Ошибка: {str(e)}")
+
+
+async def _send_pending_export_if_exists(user_id: str, update: Update):
+    """Проверяет и отправляет ожидающий экспорт если есть"""
+    try:
+        from .tools.sqlite_tools import pop_pending_export
+        
+        export_data = pop_pending_export(user_id)
+        if not export_data or export_data.get('status') != 'success':
+            return
+        
+        csv_content = export_data.get('csv_content', '')
+        if not csv_content.strip():
+            return
+        
+        filename = export_data.get('filename', 'export.csv')
+        summary = export_data.get('summary', '')
+        period = export_data.get('period', '')
+        
+        # Отправляем CSV файл
+        csv_file = io.BytesIO(csv_content.encode('utf-8-sig'))  # BOM для Excel
+        csv_file.name = filename
+        
+        await update.message.reply_document(
+            document=csv_file,
+            filename=filename,
+            caption=f"📊 *Экспорт данных*\n\n📅 Период: {period}\n📝 {summary}",
+            parse_mode='Markdown'
+        )
+        logger.info(f"Export file sent to user {user_id}: {filename}")
+        
+    except Exception as e:
+        logger.error(f"Error sending export file: {e}")
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -524,7 +623,7 @@ def create_bot() -> Application:
     application.add_handler(CommandHandler("week", week_command))
     application.add_handler(CommandHandler("goals", goals_command))
     application.add_handler(CommandHandler("undo", undo_command))
-    application.add_handler(CommandHandler("sync", sync_command))
+    application.add_handler(CommandHandler("export", export_command))
     
     # Регистрируем обработчики сообщений
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
@@ -570,7 +669,7 @@ def main():
         application.add_handler(CommandHandler("week", week_command))
         application.add_handler(CommandHandler("goals", goals_command))
         application.add_handler(CommandHandler("undo", undo_command))
-        application.add_handler(CommandHandler("sync", sync_command))
+        application.add_handler(CommandHandler("export", export_command))
         
         # Регистрируем обработчики сообщений
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
