@@ -60,6 +60,11 @@ from .tools.sqlite_tools import (
     get_weight_history,
     get_weight_nutrition_analysis,
     delete_weight,
+    # Функции для работы с тренировками
+    save_workout,
+    get_workout_history,
+    get_today_workout,
+    delete_workout,
 )
 from .tools.nutrition_tools import (
     analyze_food_description,
@@ -135,14 +140,15 @@ nutrition_coach = Agent(
 data_manager = Agent(
     name="data_manager",
     model=Gemini(model="gemini-3-flash-preview", retry_options=retry_config),
-    description="Управляет данными пользователя: сохранение еды, вес, получение истории, цели.",
-    instruction="""Ты менеджер данных для системы отслеживания питания и веса.
+    description="Управляет данными пользователя: сохранение еды, вес, тренировки, получение истории, цели.",
+    instruction="""Ты менеджер данных для системы отслеживания питания, веса и тренировок.
 
 Твоя задача:
 1. Сохранять приемы пищи в базу данных
 2. Получать историю питания по запросу
 3. Управлять целями пользователя
 4. Сохранять и анализировать данные о весе
+5. Сохранять и получать данные о тренировках
 
 Когда сохраняешь еду:
 - Используй save_meal с правильными параметрами
@@ -153,6 +159,12 @@ data_manager = Agent(
 - get_weight_history(user_id, days) — история веса
 - get_weight_nutrition_analysis(user_id, days) — анализ веса в связке с питанием
 - delete_weight(user_id, date) — удалить запись о весе
+
+Когда работаешь с тренировками:
+- save_workout(user_id, calories_burned, workout_type, duration_min, description) — записать тренировку (одна в день)
+- get_workout_history(user_id, days) — история тренировок
+- get_today_workout(user_id) — тренировка за сегодня
+- delete_workout(user_id, date) — удалить запись о тренировке
 
 Когда получаешь историю:
 - Используй get_today_meals для сегодня
@@ -176,6 +188,11 @@ data_manager = Agent(
         get_weight_history,
         get_weight_nutrition_analysis,
         delete_weight,
+        # Инструменты для тренировок
+        save_workout,
+        get_workout_history,
+        get_today_workout,
+        delete_workout,
     ],
 )
 
@@ -188,8 +205,8 @@ root_agent = Agent(
     name="nutrition_tracker",
     model=Gemini(model="gemini-3-flash-preview", retry_options=retry_config),
     description="""
-    AI-помощник для отслеживания питания и веса. 
-    Анализирует еду, считает калории, отслеживает вес,
+    AI-помощник для отслеживания питания, веса и тренировок. 
+    Анализирует еду, считает калории, отслеживает вес и сожжённые калории,
     дает рекомендации, отвечает на вопросы об истории.
     """,
     instruction="""Ты AI-помощник по питанию "NutriTracker". 
@@ -202,8 +219,9 @@ root_agent = Agent(
 5. Отвечать на вопросы об истории питания
 6. Управлять целями пользователя
 7. ЗАПИСЫВАТЬ И АНАЛИЗИРОВАТЬ ВЕС
-8. ЗАПОМИНАТЬ ПРЕДПОЧТЕНИЯ пользователя (аллергии, любимые продукты, привычки)
-9. ИСКАТЬ ИНФОРМАЦИЮ о калорийности незнакомых продуктов через Google
+8. ЗАПИСЫВАТЬ ТРЕНИРОВКИ (сожжённые калории)
+9. ЗАПОМИНАТЬ ПРЕДПОЧТЕНИЯ пользователя (аллергии, любимые продукты, привычки)
+10. ИСКАТЬ ИНФОРМАЦИЮ о калорийности незнакомых продуктов через Google
 
 КАК ОБРАБАТЫВАТЬ СООБЩЕНИЯ:
 
@@ -298,6 +316,27 @@ root_agent = Agent(
     - Формат запроса: "калорийность [продукт] КБЖУ на 100г"
     - Используй найденные данные для расчета
 
+12. ЕСЛИ пользователь сообщает о ТРЕНИРОВКЕ ("тренировка 350 ккал", "сжёг 500 калорий", "пробежка 40 минут"):
+    - Извлеки калории, тип тренировки (cardio/strength/mixed/other), длительность если указана
+    - Сохрани через save_workout(user_id, calories_burned, workout_type, duration_min, description)
+    - ВАЖНО: Одна запись в день! Повторный ввод ПЕРЕЗАПИСЫВАЕТ!
+    - Покажи подтверждение:
+      
+      🏃 Тренировка записана: 350 ккал
+      📅 Дата: 30.01.2026
+      
+    - Если была предыдущая запись — покажи изменение
+
+13. ЕСЛИ пользователь спрашивает о ТРЕНИРОВКАХ ("мои тренировки", "история тренировок"):
+    - Используй get_workout_history для получения списка
+    - Покажи красиво:
+      
+      🏋️ История тренировок:
+      • 30.01: 350 ккал (cardio)
+      • 28.01: 400 ккал (strength)
+      
+      📊 Всего сожжено: 750 ккал за 2 тренировки
+
 ВАЖНО: При каждом запросе о рекомендациях — сначала вызови recall_memories чтобы учесть предпочтения!
 
 ФОРМАТ ОТВЕТОВ:
@@ -356,6 +395,11 @@ root_agent = Agent(
         get_weight_history,
         get_weight_nutrition_analysis,
         delete_weight,
+        # Инструменты для тренировок
+        save_workout,
+        get_workout_history,
+        get_today_workout,
+        delete_workout,
         # Инструменты для анализа
         analyze_food_description,
         calculate_daily_totals,

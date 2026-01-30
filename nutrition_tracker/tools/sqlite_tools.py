@@ -65,6 +65,22 @@ def _init_db():
         )
     ''')
     
+    # Таблица для записи тренировок
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS workout_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            date TEXT NOT NULL,
+            time TEXT NOT NULL,
+            calories_burned REAL NOT NULL,
+            workout_type TEXT DEFAULT 'other',
+            duration_min INTEGER,
+            description TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, date)
+        )
+    ''')
+    
     conn.commit()
     conn.close()
 
@@ -1040,3 +1056,262 @@ def delete_weight(user_id: str, date: Optional[str] = None) -> dict:
             "message": f"Ошибка удаления: {str(e)}"
         }
 
+
+# ============================================================
+# ФУНКЦИИ ДЛЯ РАБОТЫ С ТРЕНИРОВКАМИ
+# ============================================================
+
+def save_workout(
+    user_id: str,
+    calories_burned: float,
+    workout_type: str = "other",
+    duration_min: Optional[int] = None,
+    description: Optional[str] = None
+) -> dict:
+    """
+    Сохраняет тренировку пользователя. Один замер в день (перезаписывает если уже есть).
+    
+    Args:
+        user_id: Идентификатор пользователя
+        calories_burned: Сожжённые калории
+        workout_type: Тип тренировки (cardio/strength/mixed/other)
+        duration_min: Продолжительность в минутах (опционально)
+        description: Описание тренировки (опционально)
+    
+    Returns:
+        dict: Статус операции
+    """
+    try:
+        conn = _get_connection()
+        cursor = conn.cursor()
+        
+        now = datetime.now()
+        date_str = now.strftime('%Y-%m-%d')
+        time_str = now.strftime('%H:%M')
+        
+        # Проверяем есть ли уже запись за сегодня
+        cursor.execute('''
+            SELECT id, calories_burned FROM workout_log WHERE user_id = ? AND date = ?
+        ''', (user_id, date_str))
+        existing = cursor.fetchone()
+        
+        if existing:
+            # Обновляем существующую запись
+            old_calories = existing['calories_burned']
+            cursor.execute('''
+                UPDATE workout_log 
+                SET calories_burned = ?, workout_type = ?, duration_min = ?, 
+                    description = ?, time = ?, created_at = CURRENT_TIMESTAMP
+                WHERE user_id = ? AND date = ?
+            ''', (calories_burned, workout_type, duration_min, description, time_str, user_id, date_str))
+            conn.commit()
+            conn.close()
+            
+            diff = calories_burned - old_calories
+            diff_str = f"+{diff:.0f}" if diff > 0 else f"{diff:.0f}"
+            
+            return {
+                "status": "updated",
+                "message": f"Тренировка обновлена: {old_calories:.0f} → {calories_burned:.0f} ккал ({diff_str})",
+                "date": date_str,
+                "calories_burned": calories_burned,
+                "previous_calories": old_calories,
+                "change": round(diff, 0)
+            }
+        
+        # Создаем новую запись
+        cursor.execute('''
+            INSERT INTO workout_log (user_id, date, time, calories_burned, workout_type, duration_min, description)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (user_id, date_str, time_str, calories_burned, workout_type, duration_min, description))
+        
+        workout_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        
+        return {
+            "status": "success",
+            "message": f"Тренировка записана: {calories_burned:.0f} ккал",
+            "workout_id": workout_id,
+            "date": date_str,
+            "calories_burned": calories_burned,
+            "workout_type": workout_type,
+            "duration_min": duration_min,
+            "description": description
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Ошибка сохранения тренировки: {str(e)}"
+        }
+
+
+def get_workout_history(user_id: str, days: int = 30) -> dict:
+    """
+    Получает историю тренировок за указанный период.
+    
+    Args:
+        user_id: Идентификатор пользователя
+        days: Количество дней (по умолчанию 30)
+    
+    Returns:
+        dict: История тренировок со статистикой
+    """
+    try:
+        conn = _get_connection()
+        cursor = conn.cursor()
+        
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+        start_str = start_date.strftime('%Y-%m-%d')
+        end_str = end_date.strftime('%Y-%m-%d')
+        
+        cursor.execute('''
+            SELECT date, time, calories_burned, workout_type, duration_min, description
+            FROM workout_log
+            WHERE user_id = ? AND date BETWEEN ? AND ?
+            ORDER BY date DESC
+        ''', (user_id, start_str, end_str))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        if not rows:
+            return {
+                "status": "success",
+                "message": "Записей о тренировках не найдено",
+                "entries": [],
+                "count": 0
+            }
+        
+        entries = []
+        total_calories = 0
+        total_duration = 0
+        
+        for row in rows:
+            entry = {
+                "date": row['date'],
+                "time": row['time'],
+                "calories_burned": row['calories_burned'],
+                "workout_type": row['workout_type'],
+                "duration_min": row['duration_min'],
+                "description": row['description']
+            }
+            entries.append(entry)
+            total_calories += row['calories_burned'] or 0
+            if row['duration_min']:
+                total_duration += row['duration_min']
+        
+        return {
+            "status": "success",
+            "period": f"{start_str} - {end_str}",
+            "entries": entries,
+            "count": len(entries),
+            "total_calories_burned": round(total_calories, 0),
+            "total_duration_min": total_duration,
+            "avg_calories_per_workout": round(total_calories / len(entries), 0) if entries else 0
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Ошибка получения истории: {str(e)}"
+        }
+
+
+def get_today_workout(user_id: str) -> dict:
+    """
+    Получает тренировку за сегодня.
+    
+    Args:
+        user_id: Идентификатор пользователя
+    
+    Returns:
+        dict: Информация о тренировке за сегодня
+    """
+    try:
+        conn = _get_connection()
+        cursor = conn.cursor()
+        
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        cursor.execute('''
+            SELECT date, time, calories_burned, workout_type, duration_min, description
+            FROM workout_log
+            WHERE user_id = ? AND date = ?
+        ''', (user_id, today))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            return {
+                "status": "success",
+                "message": "Сегодня тренировок не записано",
+                "has_workout": False
+            }
+        
+        return {
+            "status": "success",
+            "has_workout": True,
+            "date": row['date'],
+            "time": row['time'],
+            "calories_burned": row['calories_burned'],
+            "workout_type": row['workout_type'],
+            "duration_min": row['duration_min'],
+            "description": row['description']
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Ошибка получения данных: {str(e)}"
+        }
+
+
+def delete_workout(user_id: str, date: Optional[str] = None) -> dict:
+    """
+    Удаляет запись о тренировке.
+    
+    Args:
+        user_id: Идентификатор пользователя
+        date: Дата записи в формате YYYY-MM-DD (опционально, если не указана — последняя)
+    
+    Returns:
+        dict: Статус операции
+    """
+    try:
+        conn = _get_connection()
+        cursor = conn.cursor()
+        
+        if date:
+            cursor.execute('''
+                SELECT id, date, calories_burned FROM workout_log 
+                WHERE user_id = ? AND date = ?
+            ''', (user_id, date))
+        else:
+            cursor.execute('''
+                SELECT id, date, calories_burned FROM workout_log 
+                WHERE user_id = ? 
+                ORDER BY date DESC LIMIT 1
+            ''', (user_id,))
+        
+        row = cursor.fetchone()
+        
+        if row:
+            cursor.execute('DELETE FROM workout_log WHERE id = ?', (row['id'],))
+            conn.commit()
+            conn.close()
+            return {
+                "status": "success",
+                "message": f"Удалена запись о тренировке за {row['date']}: {row['calories_burned']:.0f} ккал"
+            }
+        else:
+            conn.close()
+            return {
+                "status": "error",
+                "message": "Запись о тренировке не найдена"
+            }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Ошибка удаления: {str(e)}"
+        }
