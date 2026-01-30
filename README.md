@@ -42,7 +42,7 @@ A multi-agent system for nutrition tracking, built on the official Google ADK.
 │                 (nutrition_tracker)                     │
 │                                                         │
 │  Coordinates the system, processes multimodal input    │
-│  Model: Gemini 2.0 Flash (Vision + Audio + Text)       │
+│  Model: Gemini 3 Flash Preview (Vision + Audio + Text) │
 └─────────────────────────────────────────────────────────┘
                            │
          ┌─────────────────┼─────────────────┐
@@ -357,25 +357,30 @@ Database `nutrition_tracker/nutrition.db`:
 ## 📁 Project Structure
 
 ```
-nutrition_tracker/
-├── __init__.py           # Module initialization
-├── agent.py              # ADK agents (root + sub-agents) + observability
-├── telegram_bot.py       # Telegram integration
-├── env.template          # Environment variables template
-├── .env                  # Environment variables (create from template)
-├── nutrition.db          # SQLite database (auto-created)
-├── *.json                # Google Sheets credentials (optional)
+.
+├── Dockerfile            # Docker image for Cloud Run
+├── deploy.sh             # Deployment script
+├── requirements.txt      # Dependencies
+├── README.md             # Documentation
 │
-└── tools/                # Tools
-    ├── __init__.py
-    ├── sqlite_tools.py   # SQLite operations (default)
-    ├── sheets_tools.py   # Google Sheets operations
-    ├── nutrition_tools.py # Nutrition analysis
-    ├── memory_tools.py   # Long-term memory (Memory Bank)
-    └── search_tools.py   # Google Search via separate agent
-
-requirements.txt          # Dependencies
-README.md                 # Documentation
+└── nutrition_tracker/
+    ├── __init__.py           # Module initialization
+    ├── agent.py              # ADK agents (root + sub-agents) + observability
+    ├── telegram_bot.py       # Telegram integration (polling mode)
+    ├── webhook_server.py     # Webhook server for Cloud Run
+    ├── env.template          # Environment variables template
+    ├── .env                  # Environment variables (create from template)
+    ├── nutrition.db          # SQLite database (auto-created, local only)
+    ├── *.json                # Google Sheets credentials (optional)
+    │
+    └── tools/                # Tools
+        ├── __init__.py
+        ├── database.py       # Database abstraction (SQLite/Turso)
+        ├── sqlite_tools.py   # SQLite/Turso CRUD operations
+        ├── sheets_tools.py   # Google Sheets sync operations
+        ├── nutrition_tools.py # Nutrition analysis
+        ├── memory_tools.py   # Long-term memory (Memory Bank)
+        └── search_tools.py   # Google Search via separate agent
 ```
 
 ---
@@ -383,12 +388,41 @@ README.md                 # Documentation
 ## 🔧 Technologies
 
 - **Google ADK** — Agent Development Kit for building agents
-- **Gemini 2.0 Flash** — LLM for processing requests
-- **SQLite** — Local data storage (default)
-- **Google Sheets API** — Cloud storage (optional)
+- **Gemini 3 Flash Preview** — LLM for processing requests
+- **SQLite / Turso** — Local SQLite or cloud Turso database
+- **Google Sheets API** — Cloud storage sync (optional)
 - **python-telegram-bot** — Telegram integration
 - **gspread** — Python client for Sheets
+- **aiohttp** — Async HTTP server for webhooks
 - **OpenTelemetry** — Distributed tracing and observability
+
+---
+
+## ☁️ Cloud Deployment
+
+### Google Cloud Run
+
+The bot can be deployed to Cloud Run with Turso as the cloud database.
+
+#### Prerequisites:
+1. Google Cloud account with Cloud Run enabled
+2. [Turso](https://turso.tech) account for cloud SQLite database
+3. Docker installed locally
+
+#### Environment Variables for Cloud:
+```env
+TURSO_DATABASE_URL=libsql://your-db.turso.io
+TURSO_AUTH_TOKEN=your-token
+WEBHOOK_MODE=true
+WEBHOOK_URL=https://your-cloud-run-url.run.app
+```
+
+#### Deploy:
+```bash
+./deploy.sh
+```
+
+The Dockerfile uses `webhook_server.py` which handles Telegram webhooks instead of polling.
 
 ---
 
