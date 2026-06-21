@@ -5,10 +5,10 @@
 
 set -e
 
-# Конфигурация (измени под себя)
-PROJECT_ID="nutrition-tracker-bot"
-SERVICE_NAME="nutrition-bot"
-REGION="us-central1"
+# Конфигурация (можно переопределить через переменные окружения)
+PROJECT_ID="${PROJECT_ID:-nutrition-bot-prod}"
+SERVICE_NAME="${SERVICE_NAME:-nutrition-bot}"
+REGION="${REGION:-us-central1}"
 
 # Цвета для вывода
 RED='\033[0;31m'
@@ -45,10 +45,10 @@ gcloud config set project $PROJECT_ID 2>/dev/null || {
 }
 
 # Включаем API
+# aiplatform не нужен: используется Gemini API напрямую (GOOGLE_GENAI_USE_VERTEXAI=FALSE)
 echo -e "${YELLOW}🔧 Включаю необходимые API...${NC}"
 gcloud services enable run.googleapis.com --quiet
 gcloud services enable cloudbuild.googleapis.com --quiet
-gcloud services enable aiplatform.googleapis.com --quiet
 
 # Запрашиваем секреты если не заданы
 if [ -z "$GOOGLE_API_KEY" ]; then
