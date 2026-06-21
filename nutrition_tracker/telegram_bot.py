@@ -6,7 +6,6 @@ import os
 import io
 import asyncio
 import logging
-from typing import Optional
 from dotenv import load_dotenv
 
 from telegram import Update
@@ -44,47 +43,81 @@ _media_group_updates: dict[str, Update] = {}
 _media_group_user_ids: dict[str, str] = {}
 
 
-def _build_session_db_url() -> Optional[str]:
+def _redact(text: str) -> str:
     """
-    Строит SQLAlchemy-URL для DatabaseSessionService поверх Turso.
-    Возвращает None, если Turso не сконфигурирован (тогда используется InMemory).
-
-    Формат для диалекта sqlalchemy-libsql:
-        sqlite+libsql://<host>/?authToken=<token>&secure=true
+    Маскирует секреты в строке, чтобы они не утекали в логи:
+    - пароль в connection string (postgres://user:PASS@host)
+    - authToken=... в query-параметрах
     """
-    turso_url = os.getenv('TURSO_URL')
-    turso_token = os.getenv('TURSO_TOKEN')
-    if not turso_url or not turso_token:
-        return None
+    import re
+    s = str(text)
+    s = re.sub(r'(://[^:/@\s]+:)[^@\s]+(@)', r'\1<redacted>\2', s)
+    s = re.sub(r'((?:authToken|password|token)=)[^&\s\'"]+', r'\1<redacted>', s, flags=re.IGNORECASE)
+    return s
 
-    # Нормализуем хост: отбрасываем схему libsql:// / https:// и хвостовой слэш
-    host = turso_url.split('://', 1)[-1].rstrip('/')
-    return f"sqlite+libsql://{host}/?authToken={turso_token}&secure=true"
+
+def _build_session_db_url():
+    """
+    Готовит async-URL и connect_args для DatabaseSessionService на основе
+    SESSION_DB_URL (например, строка подключения Neon Postgres).
+
+    ADK использует create_async_engine, поэтому нужен async-драйвер:
+    схема нормализуется к postgresql+asyncpg://. Параметры sslmode/channel_binding
+    из строки Neon не понимает asyncpg — убираем их и включаем ssl через connect_args.
+
+    Returns:
+        (url, connect_args) или (None, None), если SESSION_DB_URL не задан.
+    """
+    from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+
+    raw = os.getenv('SESSION_DB_URL')
+    if not raw:
+        return None, None
+
+    parts = urlsplit(raw)
+
+    # Нормализуем схему к async-драйверу
+    scheme = parts.scheme
+    if scheme in ('postgres', 'postgresql'):
+        scheme = 'postgresql+asyncpg'
+
+    connect_args = {}
+    # asyncpg не понимает libpq-параметры sslmode/channel_binding — выносим в ssl
+    query = dict(parse_qsl(parts.query))
+    sslmode = query.pop('sslmode', None)
+    query.pop('channel_binding', None)
+    if sslmode and sslmode != 'disable':
+        connect_args['ssl'] = True
+
+    url = urlunsplit((scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+    return url, connect_args
 
 
 def _create_session_service():
     """
-    Создаёт персистентный DatabaseSessionService поверх Turso, чтобы контекст
-    диалога переживал рестарты/масштабирование Cloud Run.
-    При любой ошибке (нет конфига, не установлен диалект) — fallback на InMemory.
+    Создаёт персистентный DatabaseSessionService (Postgres, напр. Neon), чтобы
+    контекст диалога переживал рестарты/масштабирование Cloud Run.
+    При любой ошибке или отсутствии SESSION_DB_URL — fallback на InMemory.
     """
     from google.adk.sessions import InMemorySessionService
 
-    db_url = _build_session_db_url()
-    if db_url:
+    url, connect_args = _build_session_db_url()
+    if url:
         try:
             from google.adk.sessions import DatabaseSessionService
-            service = DatabaseSessionService(db_url=db_url)
-            logger.info("🗄️ Using DatabaseSessionService (Turso) — sessions are persistent")
+            service = DatabaseSessionService(db_url=url, connect_args=connect_args)
+            logger.info("🗄️ Using DatabaseSessionService (Postgres) — sessions are persistent")
             return service
         except Exception as e:
+            # ВАЖНО: текст ошибки может содержать URL с паролем — редактируем
             logger.warning(
-                f"⚠️ Failed to init DatabaseSessionService ({e}); "
+                f"⚠️ Failed to init DatabaseSessionService "
+                f"[{type(e).__name__}: {_redact(e)}]; "
                 f"falling back to InMemory (sessions lost on restart)"
             )
     else:
         logger.warning(
-            "⚠️ TURSO_URL/TURSO_TOKEN not set; using InMemory sessions (lost on restart)"
+            "⚠️ SESSION_DB_URL not set; using InMemory sessions (lost on restart)"
         )
 
     return InMemorySessionService()

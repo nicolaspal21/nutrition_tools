@@ -16,8 +16,9 @@ Pillow>=10.0.0
 # Webhook server for Cloud Run
 aiohttp>=3.9.0
 
-# Turso SQLite (Cloud Database)
+# Turso SQLite (Cloud Database) — хранение данных пользователей
 libsql-client>=0.3.1
 
-# SQLAlchemy-диалект Turso для персистентных ADK-сессий (DatabaseSessionService)
-sqlalchemy-libsql>=0.1.0
+# Async-драйвер Postgres для персистентных ADK-сессий (DatabaseSessionService)
+# Используется с SESSION_DB_URL (напр. Neon). ADK требует async-движок.
+asyncpg>=0.29.0
