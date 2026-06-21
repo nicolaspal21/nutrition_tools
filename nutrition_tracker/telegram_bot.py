@@ -104,9 +104,11 @@ def _create_session_service():
     url, connect_args = _build_session_db_url()
     if url:
         try:
-            from google.adk.sessions import DatabaseSessionService
-            service = DatabaseSessionService(db_url=url, connect_args=connect_args)
-            logger.info("🗄️ Using DatabaseSessionService (Postgres) — sessions are persistent")
+            # Кастомный сервис: персистит сессии в Postgres, но НЕ хранит сырые
+            # фото/аудио (только текстовый результат распознавания)
+            from .session_service import MediaStrippingDatabaseSessionService
+            service = MediaStrippingDatabaseSessionService(db_url=url, connect_args=connect_args)
+            logger.info("🗄️ Using DatabaseSessionService (Postgres) — sessions are persistent (media stripped)")
             return service
         except Exception as e:
             # ВАЖНО: текст ошибки может содержать URL с паролем — редактируем
