@@ -59,6 +59,11 @@ htmlcov/
 # ADK
 .adk/
 
+# Local database (может содержать данные пользователей)
+*.db
+*.sqlite
+*.sqlite3
+
 # Old project
 nutrition-tracker-bot/
 calorie_tracker_agent/
@@ -66,4 +71,6 @@ calorie_tracker_agent/
 # Examples
 examples/
 
+# Claude
+CLAUDE.md
 

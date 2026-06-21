@@ -4,6 +4,7 @@ Search Tools - Интеграция Google Search через отдельный 
 Поскольку Google Search tool нельзя комбинировать с function calling в Gemini 2.0,
 мы используем отдельный search_agent который вызывается через этот tool.
 """
+import os
 import asyncio
 import logging
 from typing import Optional
@@ -17,10 +18,13 @@ from google.genai import types
 
 logger = logging.getLogger(__name__)
 
+# Имя модели (единый дефолт с agent.py, переопределяется через env)
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+
 # Конфигурация retry
 retry_config = types.HttpRetryOptions(
     attempts=5,
-    exp_base=7,
+    exp_base=2,
     initial_delay=1,
     http_status_codes=[429, 500, 503, 504],
 )
@@ -28,7 +32,7 @@ retry_config = types.HttpRetryOptions(
 # Отдельный агент ТОЛЬКО для поиска (без других tools)
 _search_agent = Agent(
     name="search_agent",
-    model=Gemini(model="gemini-3-flash-preview", retry_options=retry_config),
+    model=Gemini(model=GEMINI_MODEL, retry_options=retry_config),
     description="Ищет информацию о калорийности продуктов и питании в интернете через Google.",
     instruction="""Ты помощник по поиску информации о питании.
 

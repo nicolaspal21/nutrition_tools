@@ -25,15 +25,26 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 application: Application = None
 
 
+def _log_update_task_result(task: asyncio.Task):
+    """Логирует исключения из фоновой обработки update (иначе они теряются)."""
+    try:
+        exc = task.exception()
+    except asyncio.CancelledError:
+        return
+    if exc is not None:
+        logger.error(f"Unhandled error while processing update: {exc}", exc_info=exc)
+
+
 async def webhook_handler(request: web.Request) -> web.Response:
     """Обработчик webhook запросов от Telegram"""
     try:
         data = await request.json()
         update = Update.de_json(data, application.bot)
-        
-        # Обрабатываем update асинхронно
-        asyncio.create_task(application.process_update(update))
-        
+
+        # Обрабатываем update асинхронно, но не теряем ошибки внутри задачи
+        task = asyncio.create_task(application.process_update(update))
+        task.add_done_callback(_log_update_task_result)
+
         return web.Response(status=200)
     except Exception as e:
         logger.error(f"Webhook error: {e}")

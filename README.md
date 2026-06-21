@@ -44,7 +44,7 @@ A multi-agent system for nutrition tracking, built on the official Google ADK.
 │                 (nutrition_tracker)                     │
 │                                                         │
 │  Coordinates the system, processes multimodal input    │
-│  Model: Gemini 3 Flash Preview (Vision + Audio + Text) │
+│  Model: Gemini 3.5 Flash (Vision + Audio + Text)       │
 └─────────────────────────────────────────────────────────┘
                            │
          ┌─────────────────┼─────────────────┐
@@ -54,7 +54,7 @@ A multi-agent system for nutrition tracking, built on the official Google ADK.
 │ ANALYST         │ │ COACH       │ │ MANAGER         │
 │                 │ │             │ │                 │
 │ Food analysis   │ │Recommendations│ │ CRUD operations│
-│ CPFC calculation│ │ Motivation  │ │ SQLite / Sheets │
+│ CPFC calculation│ │ Motivation  │ │ Turso / SQLite  │
 └─────────────────┘ └─────────────┘ └─────────────────┘
          │                 │                 │
          └─────────────────┴─────────────────┘
@@ -78,7 +78,7 @@ A multi-agent system for nutrition tracking, built on the official Google ADK.
 | `root_agent` | Main coordinator, handles all requests |
 | `nutrition_analyst` | Analyzes food, calculates CPFC |
 | `nutrition_coach` | Provides personalized recommendations |
-| `data_manager` | Manages data (SQLite/Google Sheets) |
+| `data_manager` | Manages data (Turso/SQLite) |
 
 ### Tools:
 
@@ -157,16 +157,14 @@ copy nutrition_tracker\env.template nutrition_tracker\.env
 2. Send `/newbot`
 3. Get the token and add to `.env`
 
-#### Google Sheets (optional):
-1. Create a project in [Google Cloud Console](https://console.cloud.google.com/)
-2. Enable Google Sheets API and Google Drive API
-3. Create a Service Account and download JSON credentials
-4. Place the credentials file in `nutrition_tracker/` folder
-5. Create a Google Spreadsheet
-6. Share the spreadsheet with the service account email
-7. Add `SPREADSHEET_ID` to `.env`
+#### Database (Turso):
+1. Create an account at [Turso](https://turso.tech)
+2. Create a database: `turso db create nutrition-tracker`
+3. Get the URL: `turso db show nutrition-tracker --url`
+4. Create a token: `turso db tokens create nutrition-tracker`
+5. Add `TURSO_URL` and `TURSO_TOKEN` to `.env`
 
-> 💡 **Note**: SQLite (`nutrition.db`) is used by default. Google Sheets sync available via `/sync` command.
+> 💡 **Note**: The bot uses Turso (cloud SQLite) via `libsql-client`. `TURSO_URL` and `TURSO_TOKEN` are required — without them the app exits with a configuration error. Data is exported to CSV via the `/export` command.
 
 ---
 
@@ -306,9 +304,9 @@ what do you know about me?
 
 ## 📊 Data Structure
 
-### SQLite (default):
+### Turso / SQLite:
 
-Database `nutrition_tracker/nutrition.db`:
+Tables (in Turso cloud DB; schema is identical for a local SQLite file):
 
 **Table `meals`:**
 | Field | Type | Description |
@@ -373,13 +371,11 @@ Database `nutrition_tracker/nutrition.db`:
     ├── env.template          # Environment variables template
     ├── .env                  # Environment variables (create from template)
     ├── nutrition.db          # SQLite database (auto-created, local only)
-    ├── *.json                # Google Sheets credentials (optional)
     │
     └── tools/                # Tools
         ├── __init__.py
         ├── database.py       # Database abstraction (SQLite/Turso)
-        ├── sqlite_tools.py   # SQLite/Turso CRUD operations
-        ├── sheets_tools.py   # Google Sheets sync operations
+        ├── sqlite_tools.py   # SQLite/Turso CRUD operations + CSV export
         ├── nutrition_tools.py # Nutrition analysis
         ├── memory_tools.py   # Long-term memory (Memory Bank)
         └── search_tools.py   # Google Search via separate agent
@@ -390,11 +386,10 @@ Database `nutrition_tracker/nutrition.db`:
 ## 🔧 Technologies
 
 - **Google ADK** — Agent Development Kit for building agents
-- **Gemini 3 Flash Preview** — LLM for processing requests
+- **Gemini 3.5 Flash** — LLM for processing requests
 - **SQLite / Turso** — Local SQLite or cloud Turso database
-- **Google Sheets API** — Cloud storage sync (optional)
+- **CSV Export** — download meals/weight/workouts as CSV files
 - **python-telegram-bot** — Telegram integration
-- **gspread** — Python client for Sheets
 - **aiohttp** — Async HTTP server for webhooks
 - **OpenTelemetry** — Distributed tracing and observability
 
@@ -413,9 +408,8 @@ The bot can be deployed to Cloud Run with Turso as the cloud database.
 
 #### Environment Variables for Cloud:
 ```env
-TURSO_DATABASE_URL=libsql://your-db.turso.io
-TURSO_AUTH_TOKEN=your-token
-WEBHOOK_MODE=true
+TURSO_URL=libsql://your-db.turso.io
+TURSO_TOKEN=your-token
 WEBHOOK_URL=https://your-cloud-run-url.run.app
 ```
 
@@ -434,7 +428,7 @@ The Dockerfile uses `webhook_server.py` which handles Telegram webhooks instead 
 - **Album support**: Send multiple photos of the same dish — they'll be analyzed together
 - **Smart duplicate protection**: Blocks only exact duplicates within 2 minutes (same description + meal type)
 - **Markdown fallback**: If formatting breaks — message will be sent as plain text
-- **Persistence**: Data is stored in SQLite, not lost on restart
+- **Persistence**: Data is stored in Turso (cloud SQLite), not lost on restart
 - **Editing**: Any entry can be modified by ID
 - **Weight tracking**: One entry per day (re-entering overwrites), history with dates
 - **Weight-nutrition analysis**: Correlates weight changes with calorie intake

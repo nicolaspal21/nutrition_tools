@@ -6,6 +6,7 @@ import os
 import io
 import asyncio
 import logging
+from typing import Optional
 from dotenv import load_dotenv
 
 from telegram import Update
@@ -23,13 +24,10 @@ from google.genai import types
 # Загружаем переменные окружения
 load_dotenv()
 
-# ID пользователей с доступом к /sync (через запятую в .env)
-ADMIN_USER_IDS = set(filter(None, os.getenv('ADMIN_USER_IDS', '').split(',')))
-
 # Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG  # Временно для отладки
+    level=getattr(logging, os.getenv('LOG_LEVEL', 'INFO').upper(), logging.INFO)
 )
 logger = logging.getLogger(__name__)
 # Уменьшим шум от httpx
@@ -46,29 +44,71 @@ _media_group_updates: dict[str, Update] = {}
 _media_group_user_ids: dict[str, str] = {}
 
 
+def _build_session_db_url() -> Optional[str]:
+    """
+    Строит SQLAlchemy-URL для DatabaseSessionService поверх Turso.
+    Возвращает None, если Turso не сконфигурирован (тогда используется InMemory).
+
+    Формат для диалекта sqlalchemy-libsql:
+        sqlite+libsql://<host>/?authToken=<token>&secure=true
+    """
+    turso_url = os.getenv('TURSO_URL')
+    turso_token = os.getenv('TURSO_TOKEN')
+    if not turso_url or not turso_token:
+        return None
+
+    # Нормализуем хост: отбрасываем схему libsql:// / https:// и хвостовой слэш
+    host = turso_url.split('://', 1)[-1].rstrip('/')
+    return f"sqlite+libsql://{host}/?authToken={turso_token}&secure=true"
+
+
+def _create_session_service():
+    """
+    Создаёт персистентный DatabaseSessionService поверх Turso, чтобы контекст
+    диалога переживал рестарты/масштабирование Cloud Run.
+    При любой ошибке (нет конфига, не установлен диалект) — fallback на InMemory.
+    """
+    from google.adk.sessions import InMemorySessionService
+
+    db_url = _build_session_db_url()
+    if db_url:
+        try:
+            from google.adk.sessions import DatabaseSessionService
+            service = DatabaseSessionService(db_url=db_url)
+            logger.info("🗄️ Using DatabaseSessionService (Turso) — sessions are persistent")
+            return service
+        except Exception as e:
+            logger.warning(
+                f"⚠️ Failed to init DatabaseSessionService ({e}); "
+                f"falling back to InMemory (sessions lost on restart)"
+            )
+    else:
+        logger.warning(
+            "⚠️ TURSO_URL/TURSO_TOKEN not set; using InMemory sessions (lost on restart)"
+        )
+
+    return InMemorySessionService()
+
+
 def get_runner():
     """Получает или создает Runner для ADK агента"""
     global _runner, _session_service
-    
+
     if _runner is None:
         from .agent import root_agent
         from .tools.memory_tools import init_memory_db
-        
+
         # Инициализируем БД памяти (безопасно)
         init_memory_db()
-        
-        # Используем InMemorySessionService, так как VertexAiSessionService требует ReasoningEngine
-        # который не используется в этом проекте (GOOGLE_GENAI_USE_VERTEXAI=FALSE)
-        from google.adk.sessions import InMemorySessionService
-        logger.info("🧠 Using InMemory Session Service")
-        _session_service = InMemorySessionService()
-            
+
+        _session_service = _create_session_service()
+
         _runner = Runner(
             agent=root_agent,
             app_name="nutrition_tracker",
             session_service=_session_service,
         )
-    
+
     return _runner
 
 

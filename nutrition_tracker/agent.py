@@ -27,25 +27,18 @@ os.environ.setdefault("OTEL_METRICS_EXPORTER", "none")
 
 logger.info("🚀 Nutrition Tracker agent initializing...")
 
+# Имя модели Gemini — одно место для всех агентов (переопределяется через env)
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+
 # Retry конфигурация для устойчивости к ошибкам 429/5xx
 retry_config = types.HttpRetryOptions(
     attempts=5,
-    exp_base=7,
+    exp_base=2,
     initial_delay=1,
     http_status_codes=[429, 500, 503, 504],
 )
 
-# Импортируем tools
-# Временно используем SQLite вместо Google Sheets
-# from .tools.sheets_tools import (
-#     save_meal,
-#     get_today_meals,
-#     get_meals_by_date,
-#     get_week_meals,
-#     get_user_goals,
-#     update_user_goals,
-#     delete_last_meal,
-# )
+# Импортируем tools (данные хранятся в Turso/SQLite)
 from .tools.sqlite_tools import (
     save_meal,
     get_today_meals,
@@ -88,7 +81,7 @@ from .tools.search_tools import search_nutrition_info
 # Агент для анализа еды и расчета КБЖУ
 nutrition_analyst = Agent(
     name="nutrition_analyst",
-    model=Gemini(model="gemini-3-flash-preview", retry_options=retry_config),
+    model=Gemini(model=GEMINI_MODEL, retry_options=retry_config),
     description="Эксперт по анализу еды и расчету калорий, белков, жиров и углеводов.",
     instruction="""Ты профессиональный нутрициолог-аналитик.
 
@@ -115,7 +108,7 @@ nutrition_analyst = Agent(
 # Агент-коуч для рекомендаций
 nutrition_coach = Agent(
     name="nutrition_coach",
-    model=Gemini(model="gemini-3-flash-preview", retry_options=retry_config),
+    model=Gemini(model=GEMINI_MODEL, retry_options=retry_config),
     description="Персональный коуч по питанию, дает мотивирующие рекомендации.",
     instruction="""Ты дружелюбный и мотивирующий коуч по питанию.
 
@@ -141,7 +134,7 @@ nutrition_coach = Agent(
 # Агент для работы с данными
 data_manager = Agent(
     name="data_manager",
-    model=Gemini(model="gemini-3-flash-preview", retry_options=retry_config),
+    model=Gemini(model=GEMINI_MODEL, retry_options=retry_config),
     description="Управляет данными пользователя: сохранение еды, вес, тренировки, получение истории, цели.",
     instruction="""Ты менеджер данных для системы отслеживания питания, веса и тренировок.
 
@@ -205,7 +198,7 @@ data_manager = Agent(
 
 root_agent = Agent(
     name="nutrition_tracker",
-    model=Gemini(model="gemini-3-flash-preview", retry_options=retry_config),
+    model=Gemini(model=GEMINI_MODEL, retry_options=retry_config),
     description="""
     AI-помощник для отслеживания питания, веса и тренировок. 
     Анализирует еду, считает калории, отслеживает вес и сожжённые калории,

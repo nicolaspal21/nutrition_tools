@@ -1,19 +1,15 @@
 """
 Database connection module.
-Поддерживает Turso (Cloud) через libsql-client и локальный SQLite.
+Использует Turso (Cloud SQLite) через libsql-client.
+Требуются переменные окружения TURSO_URL и TURSO_TOKEN.
 """
 import os
-import sqlite3
-from typing import Any, List, Optional, Tuple
 from dotenv import load_dotenv
 
 # Загружаем переменные окружения сразу при импорте
 # .env находится на уровень выше, в папке nutrition_tracker
 env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
 load_dotenv(env_path)
-
-# Для локальной разработки - путь к SQLite файлу
-LOCAL_DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'nutrition.db')
 
 # Пробуем импортировать libsql_client
 try:
