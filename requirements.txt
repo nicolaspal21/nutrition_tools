@@ -1,5 +1,6 @@
 # Google Agent Development Kit
-google-adk>=0.3.0
+# extra [db] подтягивает sqlalchemy — нужен для DatabaseSessionService (сессии в Postgres)
+google-adk[db]>=0.3.0
 
 # Google GenAI (для types.Content, types.Part и др.)
 google-genai>=1.0.0

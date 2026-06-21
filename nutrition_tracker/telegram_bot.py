@@ -125,6 +125,26 @@ def _create_session_service():
     return InMemorySessionService()
 
 
+def _extract_final_text(event) -> str:
+    """
+    Возвращает текст ТОЛЬКО из финального ответа модели.
+    Промежуточные события (вызовы инструментов, function_call/function_response,
+    делегирование) игнорируются — чтобы служебные вызовы не утекали в чат.
+    """
+    if not event.is_final_response():
+        return ""
+    if not (event.content and event.content.parts):
+        return ""
+    texts = []
+    for part in event.content.parts:
+        # пропускаем служебные части (вызовы функций/ответы инструментов)
+        if getattr(part, 'function_call', None) or getattr(part, 'function_response', None):
+            continue
+        if getattr(part, 'text', None):
+            texts.append(part.text)
+    return "".join(texts)
+
+
 def get_runner():
     """Получает или создает Runner для ADK агента"""
     global _runner, _session_service
@@ -209,27 +229,18 @@ async def run_agent_multimodal(
         
         content = types.Content(role="user", parts=parts)
         
-        # Собираем ответ из async generator
+        # Собираем ответ из async generator (только финальный текст модели)
         final_response = ""
         async for event in runner.run_async(
             session_id=session_id,
             user_id=user_id,
             new_message=content,
         ):
-            # Логируем все события для отладки
             logger.debug(f"Event: {type(event).__name__}, is_final: {event.is_final_response()}")
-            
-            # Извлекаем текст из любого события с контентом
-            if event.content and event.content.parts:
-                for part in event.content.parts:
-                    if hasattr(part, 'text') and part.text:
-                        # Берём последний текстовый ответ (финальный)
-                        if event.is_final_response():
-                            final_response = part.text
-                        elif not final_response:
-                            # Сохраняем промежуточный если финального ещё нет
-                            final_response = part.text
-        
+            text = _extract_final_text(event)
+            if text:
+                final_response = text
+
         return final_response if final_response else "Не удалось получить ответ. Попробуй еще раз."
             
     except Exception as e:
@@ -636,14 +647,10 @@ async def _run_agent_with_multiple_images(
             user_id=user_id,
             new_message=content,
         ):
-            if event.content and event.content.parts:
-                for part in event.content.parts:
-                    if hasattr(part, 'text') and part.text:
-                        if event.is_final_response():
-                            final_response = part.text
-                        elif not final_response:
-                            final_response = part.text
-        
+            text = _extract_final_text(event)
+            if text:
+                final_response = text
+
         return final_response if final_response else "Не удалось получить ответ."
             
     except Exception as e:

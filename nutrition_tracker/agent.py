@@ -75,126 +75,12 @@ from .tools.search_tools import search_nutrition_info
 
 
 # ============================================================
-# SUB-AGENTS (Специализированные агенты)
+# ROOT AGENT (Единый агент со всеми инструментами)
 # ============================================================
-
-# Агент для анализа еды и расчета КБЖУ
-nutrition_analyst = Agent(
-    name="nutrition_analyst",
-    model=Gemini(model=GEMINI_MODEL, retry_options=retry_config),
-    description="Эксперт по анализу еды и расчету калорий, белков, жиров и углеводов.",
-    instruction="""Ты профессиональный нутрициолог-аналитик.
-
-Твоя задача:
-1. Анализировать описание еды от пользователя
-2. Определять продукты и их примерные порции
-3. Рассчитывать калории и БЖУ (белки, жиры, углеводы)
-4. Определять тип приема пищи
-
-Правила:
-- Используй реальные данные о калорийности (база USDA)
-- Если размер порции не указан - используй стандартную
-- Будь точным в расчетах
-- Для каждого блюда указывай отдельно КБЖУ
-
-Формат ответа при анализе еды:
-- Перечисли распознанные продукты
-- Укажи калории, белки, жиры, углеводы
-- Укажи тип приема пищи
-""",
-    tools=[analyze_food_description],
-)
-
-# Агент-коуч для рекомендаций
-nutrition_coach = Agent(
-    name="nutrition_coach",
-    model=Gemini(model=GEMINI_MODEL, retry_options=retry_config),
-    description="Персональный коуч по питанию, дает мотивирующие рекомендации.",
-    instruction="""Ты дружелюбный и мотивирующий коуч по питанию.
-
-Твоя задача:
-1. Анализировать прогресс пользователя к его целям
-2. Давать конкретные рекомендации что съесть дальше
-3. Мотивировать и поддерживать
-
-Стиль общения:
-- Позитивный, честный. 
-- Краткий (2-3 предложения)
-- Используй эмодзи для наглядности
-- Давай конкретные советы, не общие фразы
-
-Типы целей:
-- weight_loss: дефицит калорий, больше белка
-- muscle_gain: профицит калорий, много белка
-- maintenance: баланс
-""",
-    tools=[get_nutrition_advice],
-)
-
-# Агент для работы с данными
-data_manager = Agent(
-    name="data_manager",
-    model=Gemini(model=GEMINI_MODEL, retry_options=retry_config),
-    description="Управляет данными пользователя: сохранение еды, вес, тренировки, получение истории, цели.",
-    instruction="""Ты менеджер данных для системы отслеживания питания, веса и тренировок.
-
-Твоя задача:
-1. Сохранять приемы пищи в базу данных
-2. Получать историю питания по запросу
-3. Управлять целями пользователя
-4. Сохранять и анализировать данные о весе
-5. Сохранять и получать данные о тренировках
-
-Когда сохраняешь еду:
-- Используй save_meal с правильными параметрами
-- Всегда указывай user_id, description, calories, protein, fat, carbs
-
-Когда работаешь с весом:
-- save_weight(user_id, weight, note) — записать вес (один раз в день)
-- get_weight_history(user_id, days) — история веса
-- get_weight_nutrition_analysis(user_id, days) — анализ веса в связке с питанием
-- delete_weight(user_id, date) — удалить запись о весе
-
-Когда работаешь с тренировками:
-- save_workout(user_id, calories_burned, workout_type, duration_min, description) — записать тренировку (одна в день)
-- get_workout_history(user_id, days) — история тренировок
-- get_today_workout(user_id) — тренировка за сегодня
-- delete_workout(user_id, date) — удалить запись о тренировке
-
-Когда получаешь историю:
-- Используй get_today_meals для сегодня
-- Используй get_meals_by_date для конкретной даты
-- Используй get_week_meals для недельной статистики
-
-Формат даты: YYYY-MM-DD (например, 2024-11-25)
-""",
-    tools=[
-        save_meal,
-        get_today_meals,
-        get_meals_by_date,
-        get_week_meals,
-        get_user_goals,
-        update_user_goals,
-        edit_meal,
-        delete_meal,
-        calculate_daily_totals,
-        # Инструменты для веса
-        save_weight,
-        get_weight_history,
-        get_weight_nutrition_analysis,
-        delete_weight,
-        # Инструменты для тренировок
-        save_workout,
-        get_workout_history,
-        get_today_workout,
-        delete_workout,
-    ],
-)
-
-
-# ============================================================
-# ROOT AGENT (Главный агент-координатор)
-# ============================================================
+# Примечание: ранее были суб-агенты nutrition_analyst/nutrition_coach/
+# data_manager, но root_agent уже содержит все их инструменты напрямую.
+# Делегирование (transfer_to_agent) было избыточным и протекало в чат,
+# поэтому суб-агенты убраны — координатор отвечает сам.
 
 root_agent = Agent(
     name="nutrition_tracker",
@@ -417,13 +303,6 @@ root_agent = Agent(
         search_nutrition_info,
         # Экспорт данных
         export_user_data,
-    ],
-    # Суб-агенты для делегирования специфических задач
-    # search_agent вызывается через search_nutrition_info tool (отдельная сессия)
-    sub_agents=[
-        nutrition_analyst,
-        nutrition_coach,
-        data_manager,
     ],
 )
 
