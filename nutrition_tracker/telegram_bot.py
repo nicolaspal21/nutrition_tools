@@ -6,6 +6,7 @@ import os
 import io
 import asyncio
 import logging
+from datetime import datetime
 from dotenv import load_dotenv
 
 from telegram import Update
@@ -41,6 +42,10 @@ _media_groups: dict[str, list[bytes]] = {}
 _media_group_captions: dict[str, str] = {}
 _media_group_updates: dict[str, Update] = {}
 _media_group_user_ids: dict[str, str] = {}
+
+# Отложенные задачи (обработка альбомов): webhook_server дожидается их
+# внутри HTTP-запроса, иначе на Cloud Run они работают на задушенном CPU
+background_tasks: set[asyncio.Task] = set()
 
 
 def _redact(text: str) -> str:
@@ -167,6 +172,36 @@ def get_runner():
     return _runner
 
 
+def _session_id_for(user_id: str) -> str:
+    """
+    ID сессии с ротацией раз в день.
+
+    Раньше сессия была вечной (telegram_{user_id}): DatabaseSessionService на
+    каждый ход читал ВСЮ историю и отправлял её в Gemini — бот замедлялся тем
+    сильнее, чем дольше им пользовались. Дневная сессия ограничивает контекст.
+    """
+    return f"telegram_{user_id}_{datetime.now().strftime('%Y%m%d')}"
+
+
+async def _ensure_session(user_id: str, session_id: str):
+    """Получает сессию или создаёт новую (без лишнего create на каждое сообщение)."""
+    try:
+        session = await _session_service.get_session(
+            app_name="nutrition_tracker",
+            user_id=user_id,
+            session_id=session_id
+        )
+        if session is None:
+            await _session_service.create_session(
+                app_name="nutrition_tracker",
+                user_id=user_id,
+                session_id=session_id
+            )
+    except Exception:
+        # Гонка/дубликат — сессия уже есть, работаем дальше
+        pass
+
+
 async def run_agent(user_id: str, message: str) -> str:
     """
     Запускает агента для обработки текстового сообщения.
@@ -200,19 +235,12 @@ async def run_agent_multimodal(
         Ответ агента
     """
     runner = get_runner()
-    session_id = f"telegram_{user_id}"
-    
+    session_id = _session_id_for(user_id)
+
     try:
         # Создаем или получаем сессию
-        try:
-            await _session_service.create_session(
-                app_name="nutrition_tracker",
-                user_id=user_id,
-                session_id=session_id
-            )
-        except Exception:
-            pass  # Сессия уже существует
-        
+        await _ensure_session(user_id, session_id)
+
         # Формируем parts для Content
         parts = [types.Part(text=f"[user_id: {user_id}] {message}")]
         
@@ -530,10 +558,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _media_group_user_ids[media_group_id] = user_id
             if caption:
                 _media_group_captions[media_group_id] = caption
-            # Запускаем отложенную обработку
-            asyncio.create_task(
+            # Запускаем отложенную обработку (регистрируем задачу, чтобы
+            # webhook_server мог дождаться её в рамках запроса)
+            task = asyncio.create_task(
                 _process_media_group_delayed(media_group_id, context)
             )
+            background_tasks.add(task)
+            task.add_done_callback(background_tasks.discard)
         
         _media_groups[media_group_id].append(photo_bytes)
         # Сохраняем caption если есть (может быть на любом фото альбома)
@@ -614,18 +645,11 @@ async def _run_agent_with_multiple_images(
 ) -> str:
     """Запускает агента с несколькими изображениями"""
     runner = get_runner()
-    session_id = f"telegram_{user_id}"
-    
+    session_id = _session_id_for(user_id)
+
     try:
-        try:
-            await _session_service.create_session(
-                app_name="nutrition_tracker",
-                user_id=user_id,
-                session_id=session_id
-            )
-        except Exception:
-            pass
-        
+        await _ensure_session(user_id, session_id)
+
         # Формируем parts: текст + все изображения
         parts = [types.Part(text=f"[user_id: {user_id}] {message}")]
         

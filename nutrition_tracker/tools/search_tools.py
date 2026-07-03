@@ -5,8 +5,8 @@ Search Tools - Интеграция Google Search через отдельный 
 мы используем отдельный search_agent который вызывается через этот tool.
 """
 import os
-import asyncio
 import logging
+import uuid
 from typing import Optional
 
 from google.adk.agents import Agent
@@ -21,9 +21,9 @@ logger = logging.getLogger(__name__)
 # Имя модели (единый дефолт с agent.py, переопределяется через env)
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 
-# Конфигурация retry
+# Конфигурация retry (3 попытки — как в agent.py, чтобы не копить задержки)
 retry_config = types.HttpRetryOptions(
-    attempts=5,
+    attempts=3,
     exp_base=2,
     initial_delay=1,
     http_status_codes=[429, 500, 503, 504],
@@ -78,19 +78,17 @@ def _get_search_runner() -> Runner:
 async def _run_search_async(query: str) -> str:
     """Внутренняя async функция для вызова search_agent"""
     runner = _get_search_runner()
-    session_id = "search_session"
-    
+    # Каждый поиск — своя одноразовая сессия: общая сессия накапливала
+    # историю всех прошлых поисков и раздувала промпт search-агента
+    session_id = f"search_{uuid.uuid4().hex}"
+
     try:
-        # Создаем сессию (или используем существующую)
-        try:
-            await _search_session_service.create_session(
-                app_name="nutrition_search",
-                user_id="system",
-                session_id=session_id
-            )
-        except Exception:
-            pass  # Сессия уже существует
-        
+        await _search_session_service.create_session(
+            app_name="nutrition_search",
+            user_id="system",
+            session_id=session_id
+        )
+
         # Запрос к search_agent
         content = types.Content(
             role="user",
@@ -118,41 +116,33 @@ async def _run_search_async(query: str) -> str:
         return f"Ошибка поиска: {str(e)}"
 
 
-def search_nutrition_info(query: str) -> dict:
+async def search_nutrition_info(query: str) -> dict:
     """
     Ищет информацию о калорийности и КБЖУ продуктов в интернете.
-    
+
     Используй этот инструмент когда:
     - Нужно узнать калорийность незнакомого продукта
     - Пользователь спрашивает о пользе/вреде продукта
     - Нужно найти КБЖУ экзотического блюда
     - Не уверен в калорийности
-    
+
     Args:
         query: Поисковый запрос (например: "калорийность авокадо на 100г")
-    
+
     Returns:
         dict со статусом и найденной информацией
     """
+    # ADK поддерживает async-инструменты: выполняем поиск в текущем event loop
+    # (раньше здесь создавался отдельный поток + новый event loop на каждый вызов)
     try:
-        # Запускаем async функцию в event loop
-        try:
-            loop = asyncio.get_running_loop()
-            # Если уже есть running loop - создаем task
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, _run_search_async(query))
-                result = future.result(timeout=30)
-        except RuntimeError:
-            # Нет running loop - запускаем напрямую
-            result = asyncio.run(_run_search_async(query))
-        
+        result = await _run_search_async(query)
+
         return {
             "status": "success",
             "query": query,
             "result": result
         }
-        
+
     except Exception as e:
         logger.error(f"Search error: {e}")
         return {

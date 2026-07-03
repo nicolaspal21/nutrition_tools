@@ -71,23 +71,34 @@ if [ -z "$TURSO_TOKEN" ]; then
     read -s TURSO_TOKEN
 fi
 
+# SESSION_DB_URL (Neon Postgres) опционален: без него сессии InMemory
+# и теряются при рестарте/масштабировании
+EXTRA_ENV_FLAGS=()
+if [ -n "$SESSION_DB_URL" ]; then
+    EXTRA_ENV_FLAGS+=(--update-env-vars="SESSION_DB_URL=$SESSION_DB_URL")
+else
+    echo -e "${YELLOW}⚠️ SESSION_DB_URL не задан — сессии будут InMemory (теряются при рестарте)${NC}"
+fi
+
 # Первый деплой (без WEBHOOK_URL)
 echo -e "${GREEN}🚀 Деплою на Cloud Run...${NC}"
 gcloud run deploy $SERVICE_NAME \
     --source . \
     --region=$REGION \
     --allow-unauthenticated \
-    --set-env-vars="GOOGLE_API_KEY=$GOOGLE_API_KEY" \
-    --set-env-vars="TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN" \
-    --set-env-vars="TURSO_URL=$TURSO_URL" \
-    --set-env-vars="TURSO_TOKEN=$TURSO_TOKEN" \
-    --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
-    --set-env-vars="GOOGLE_CLOUD_LOCATION=$REGION" \
-    --set-env-vars="GOOGLE_GENAI_USE_VERTEXAI=FALSE" \
-    --memory=512Mi \
-    --cpu=1 \
+    --update-env-vars="GOOGLE_API_KEY=$GOOGLE_API_KEY" \
+    --update-env-vars="TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN" \
+    --update-env-vars="TURSO_URL=$TURSO_URL" \
+    --update-env-vars="TURSO_TOKEN=$TURSO_TOKEN" \
+    --update-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
+    --update-env-vars="GOOGLE_CLOUD_LOCATION=$REGION" \
+    --update-env-vars="GOOGLE_GENAI_USE_VERTEXAI=FALSE" \
+    "${EXTRA_ENV_FLAGS[@]}" \
+    --memory=1Gi \
+    --cpu=2 \
     --min-instances=0 \
     --max-instances=3 \
+    --cpu-boost \
     --timeout=300
 
 # Получаем URL сервиса
@@ -96,10 +107,12 @@ SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --region=$REGION --form
 echo -e "${GREEN}✅ Сервис задеплоен: ${SERVICE_URL}${NC}"
 
 # Обновляем с WEBHOOK_URL
+# ВАЖНО: --update-env-vars, а не --set-env-vars — последний СТИРАЕТ все
+# остальные переменные сервиса, оставляя только перечисленные
 echo -e "${YELLOW}🔗 Устанавливаю WEBHOOK_URL...${NC}"
 gcloud run services update $SERVICE_NAME \
     --region=$REGION \
-    --set-env-vars="WEBHOOK_URL=$SERVICE_URL"
+    --update-env-vars="WEBHOOK_URL=$SERVICE_URL"
 
 echo ""
 echo -e "${GREEN}╔═══════════════════════════════════════════════════╗${NC}"

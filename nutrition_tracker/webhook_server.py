@@ -35,15 +35,48 @@ def _log_update_task_result(task: asyncio.Task):
         logger.error(f"Unhandled error while processing update: {exc}", exc_info=exc)
 
 
+# Сколько ждать обработку внутри запроса. Меньше таймаута ретрая Telegram:
+# если не успели — отвечаем 200 (чтобы не получить дубль), задача доработает в фоне
+PROCESS_TIMEOUT_SEC = 55
+
+
+async def _process_update_within_request(update: Update):
+    """
+    Полная обработка update, включая отложенные задачи (альбомы фото).
+
+    Обработка намеренно происходит ВНУТРИ webhook-запроса: Cloud Run с
+    request-based биллингом выделяет CPU только пока открыт HTTP-запрос.
+    Раньше мы отвечали 200 сразу и обрабатывали в фоне — фоновая задача
+    работала на задушенном (~0.01) CPU, отсюда и ответы по минуте.
+    """
+    await application.process_update(update)
+
+    # Альбомы: handle_photo откладывает обработку в отдельную задачу
+    # (ждёт 1.5с, пока придут все фото) — дожидаемся её в рамках запроса
+    from .telegram_bot import background_tasks
+    pending = {t for t in background_tasks if not t.done()}
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
 async def webhook_handler(request: web.Request) -> web.Response:
     """Обработчик webhook запросов от Telegram"""
     try:
         data = await request.json()
         update = Update.de_json(data, application.bot)
 
-        # Обрабатываем update асинхронно, но не теряем ошибки внутри задачи
-        task = asyncio.create_task(application.process_update(update))
+        task = asyncio.create_task(_process_update_within_request(update))
         task.add_done_callback(_log_update_task_result)
+        try:
+            # shield: при таймауте задача не отменяется, а доделывается в фоне
+            await asyncio.wait_for(asyncio.shield(task), timeout=PROCESS_TIMEOUT_SEC)
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Update processing exceeded {PROCESS_TIMEOUT_SEC}s; "
+                f"returning 200 early, task continues in background"
+            )
+        except Exception:
+            pass  # ошибка уже залогирована в _log_update_task_result
 
         return web.Response(status=200)
     except Exception as e:
@@ -90,6 +123,12 @@ async def on_startup(app: web.Application):
         from .tools.sqlite_tools import _init_db
         _init_db()
         logger.info("✅ Database tables initialized")
+
+        # Прогреваем агента при старте: иначе первое сообщение платит за
+        # импорт ADK-агента, инициализацию memory DB и session service
+        from .telegram_bot import get_runner
+        get_runner()
+        logger.info("✅ Agent runner warmed up")
         
         # Регистрируем хендлеры сообщений
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))

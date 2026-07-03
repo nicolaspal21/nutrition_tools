@@ -31,6 +31,10 @@ examples/
 # Local env file (secrets go to Cloud Run env vars)
 .env
 
+# Ключи сервисных аккаунтов — секреты не должны попадать в образ
+# (код их не использует; переменные заданы в Cloud Run env)
+*.json
+
 # Jupyter
 *.ipynb
 .ipynb_checkpoints

@@ -20,9 +20,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("nutrition_tracker")
 
-# OpenTelemetry трейсинг (экспорт в консоль для разработки)
+# OpenTelemetry трейсинг: по умолчанию выключен (в проде печать трейсов в stdout
+# на каждый запрос тормозит и засоряет логи; для отладки задай OTEL_TRACES_EXPORTER=console)
 os.environ.setdefault("OTEL_SERVICE_NAME", "nutrition_tracker")
-os.environ.setdefault("OTEL_TRACES_EXPORTER", "console")
+os.environ.setdefault("OTEL_TRACES_EXPORTER", "none")
 os.environ.setdefault("OTEL_METRICS_EXPORTER", "none")
 
 logger.info("🚀 Nutrition Tracker agent initializing...")
@@ -30,9 +31,11 @@ logger.info("🚀 Nutrition Tracker agent initializing...")
 # Имя модели Gemini — одно место для всех агентов (переопределяется через env)
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 
-# Retry конфигурация для устойчивости к ошибкам 429/5xx
+# Retry конфигурация для устойчивости к ошибкам 429/5xx.
+# 3 попытки (1с + 2с задержки максимум): 5 попыток с exp backoff могли
+# незаметно добавлять до ~15с к ответу при исчерпании квоты
 retry_config = types.HttpRetryOptions(
-    attempts=5,
+    attempts=3,
     exp_base=2,
     initial_delay=1,
     http_status_codes=[429, 500, 503, 504],

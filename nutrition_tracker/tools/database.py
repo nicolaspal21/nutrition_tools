@@ -21,6 +21,10 @@ except ImportError:
 # Флаг: используем Turso или локальный SQLite
 _using_turso = False
 
+# Единый клиент Turso на процесс: HTTP-клиент stateless, а создание клиента
+# на каждый tool call означало новый TLS-handshake и лишние ~100-300мс
+_client = None
+
 
 class DictRow(dict):
     """Row object that supports both dict and index access."""
@@ -115,7 +119,9 @@ class LibSqlConnectionWrapper:
         pass
 
     def close(self):
-        self._client.close()
+        # Клиент общий на весь процесс (см. get_connection) — не закрываем его,
+        # иначе следующий tool call создаст новое TLS-соединение
+        pass
 
 
 def get_connection():
@@ -130,31 +136,33 @@ def get_connection():
         ValueError: Если не заданы TURSO_URL или TURSO_TOKEN
         ImportError: Если не установлен пакет libsql-client
     """
-    global _using_turso
-    
+    global _using_turso, _client
+
     turso_url = os.getenv('TURSO_URL')
     turso_token = os.getenv('TURSO_TOKEN')
-    
+
     if not turso_url or not turso_token:
         raise ValueError("❌ Ошибка конфигурации: Не заданы TURSO_URL или TURSO_TOKEN в .env")
-    
+
     # Принудительно используем HTTPS вместо libsql:// (WebSockets), чтобы избежать ошибки 505
     if turso_url.startswith("libsql://"):
         turso_url = turso_url.replace("libsql://", "https://")
-        
+
     if not LIBSQL_AVAILABLE:
         raise ImportError("❌ Ошибка зависимостей: Пакет 'libsql-client' не установлен. Выполните: pip install libsql-client")
 
     # Turso (Cloud)
     _using_turso = True
     try:
-        # Используем синхронный клиент
-        client = libsql_client.create_client_sync(
-            url=turso_url,
-            auth_token=turso_token
-        )
-        return LibSqlConnectionWrapper(client)
+        # Синхронный клиент, один на процесс (переиспользуем TLS-соединение)
+        if _client is None or getattr(_client, 'closed', False):
+            _client = libsql_client.create_client_sync(
+                url=turso_url,
+                auth_token=turso_token
+            )
+        return LibSqlConnectionWrapper(_client)
     except Exception as e:
+        _client = None
         raise ConnectionError(f"❌ Не удалось подключиться к Turso: {e}")
 
 

@@ -85,6 +85,13 @@ def _init_db():
         )
     ''')
     
+    # Индекс под основные запросы (выборки за день/дату идут по user_id + date;
+    # у weight_log/workout_log индекс уже есть за счёт UNIQUE(user_id, date))
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_meals_user_date
+        ON meals(user_id, date)
+    ''')
+
     conn.commit()
     conn.close()
 
